@@ -176,35 +176,35 @@ my $xonstream = IO::Async::Socket->new(
             {
                if (keys %$players > 0 && $type && $map)
                {
-						my $embed = {
-							'color' => '3447003',
-							'provider' => {
-								'name' => 'twlz',
-								'url' => 'https://xonotic.lifeisabug.com',
-							 },
-							 'fields' => [
-							 {
-								 'name'   => 'Type',
-								 'value'  => $type,
-								 'inline' => \1,
-							 },
-							 {
-								 'name'   => 'Map',
-								 'value'  => "$map ",
-								 'inline' => \1,
-							 },
-							 {
-								 'name'   => 'Players',
-								 'value'  => keys %$players,
-								 'inline' => \1,
-							 },
-							 ],
-						};
+                  my $embed = {
+                     'color' => '3447003',
+                     'provider' => {
+                        'name' => 'twlz',
+                        'url' => 'https://xonotic.lifeisabug.com',
+                      },
+                      'fields' => [
+                      {
+                         'name'   => 'Type',
+                         'value'  => $type,
+                         'inline' => \1,
+                      },
+                      {
+                         'name'   => 'Map',
+                         'value'  => "$map ",
+                         'inline' => \1,
+                      },
+                      {
+                         'name'   => 'Players',
+                         'value'  => keys %$players,
+                         'inline' => \1,
+                      },
+                      ],
+                  };
 
-						my $message = {
-							'content' => '',
-							'embed' => $embed,
-						};
+                  my $message = {
+                     'content' => '',
+                     'embed' => $embed,
+                  };
 
                   $discord->send_message( $$config{chan}, $message );
                }
