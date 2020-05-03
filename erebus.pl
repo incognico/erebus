@@ -52,7 +52,6 @@ my $self;
 
 my $config = {
    game  => 'Xonotic @ twlz',
-   chan  => 706113584626663475,
    remip => '2a02:c207:3003:5281::1',
    locip => undef, # undef = $remip
    port  => 26000, # local port += 444
@@ -61,8 +60,10 @@ my $config = {
    debug => 0,
 
    discord => {
-      client_id => ,
-      owner_id  => 373912992758235148,
+     linkchan   => 706113584626663475,
+     nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677],
+     client_id  => ,
+     owner_id   => 373912992758235148,
    }
 };
 
@@ -294,7 +295,7 @@ my $xonstream = IO::Async::Socket->new(
                      'embed' => $embed,
                   };
 
-                  $discord->send_message( $$config{chan}, $message );
+                  $discord->send_message( $$config{discord}{linkchan}, $message );
                }
             }
             when ( 'team' )
@@ -338,7 +339,7 @@ my $xonstream = IO::Async::Socket->new(
                         'embed' => $embed,
                      };
 
-                     $discord->send_message( $$config{chan}, $message );
+                     $discord->send_message( $$config{discord}{linkchan}, $message );
                   }
                }
             }
@@ -369,7 +370,7 @@ my $xonstream = IO::Async::Socket->new(
             $final =~ s/^/<:gtfo:603609334781313037> / if ($info[0] eq 'part');
             $final =~ s/^/<:NyanPasu:562191812702240779> / if ($info[0] eq 'join');
 
-            $discord->send_message( $$config{chan}, ':flag_' . $$players{$info[1]}{geo} . ': ' . $final );
+            $discord->send_message( $$config{discord}{linkchan}, ':flag_' . $$players{$info[1]}{geo} . ': ' . $final );
          }
 
          delete $$players{$delaydelete} if (defined $delaydelete);
@@ -419,7 +420,7 @@ sub discord_on_message_create
          $msg =~ s/\@+everyone/everyone/g;
          $msg =~ s/\@+here/here/g;
 
-         if ( $channel eq $$config{'chan'} )
+         if ( $channel eq $$config{discord}{linkchan} )
          {
             $msg =~ s/`//g;
             $msg =~ s/%/%%/g;
@@ -435,7 +436,7 @@ sub discord_on_message_create
 
             toxon($msg);
          }
-         elsif ( $msg =~ /^!(?:xon(?:stat)?s?|xs) (.+)/i && $channel ne $$config{chan} )
+         elsif ( $msg =~ /^!(?:xon(?:stat)?s?|xs) (.+)/i && $channel !~ @{$$config{discord}{nocmdchans}} )
          {
             my ($qid, $stats);
             ($qid = $1) =~ s/[^0-9]//g;
@@ -479,7 +480,7 @@ sub discord_on_message_create
                   'url' => 'https://stats.xonotic.org',
                 },
 #               'thumbnail' => {
-#                  'url' => "https://cdn.discordapp.com/emojis/458355320364859393.png?v=1",
+#                  'url' => 'https://cdn.discordapp.com/emojis/706283635719929876.png?v=1',
 #                  'width' => 38,
 #                  'height' => 38,
 #               },
