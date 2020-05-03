@@ -15,11 +15,10 @@
 # sv_eventlog 1
 # sv_eventlog_ipv6_delimiter 1
 # sv_logscores_bots 1
-# rcon_secure 1
 # rcon_password <pass>
 
 # TODO:
-# - discord2rcon
+# - !status command
 # - endmatch statistics
 
 use v5.16.0;
@@ -51,13 +50,15 @@ $ua->timeout( 6 );
 my $self;
 
 my $config = {
-   game  => 'Xonotic @ twlz',
-   remip => '2a02:c207:3003:5281::1',
-   locip => undef, # undef = $remip
-   port  => 26000, # local port += 444
-   pass  => '',
-   geo   => '/home/k/GeoLite2-City.mmdb',
-   debug => 0,
+   game   => 'Xonotic @ twlz',
+   remip  => '2a02:c207:3003:5281::1',
+   locip  => undef, # undef = $remip
+   port   => 26000, # local port += 444
+   secure => 1, # rcon_secure value in server.cfg
+   smbmod => 1, # set to 1 if server uses SMB modpack (server/commands.qc)
+   pass   => '',
+   geo    => '/home/k/GeoLite2-City.mmdb',
+   debug  => 1,
 
    discord => {
      linkchan   => 706113584626663475,
@@ -182,23 +183,29 @@ discord_on_message_create();
 
 $discord->init();
 
-my ($map, $bots, $players, $type, $maptime) = ('', 0);
+my ($map, $bots, $players, $type, $maptime, $challenge) = ('', 0);
 
 my $xonstream = IO::Async::Socket->new(
    on_recv => sub {
       my ( $self, $dgram, $addr ) = @_;
 
       $dgram =~ s/(?:\377){4}n//g;
-      $dgram =~ s/\^(\d|x[\dA-Fa-f]{3})//g;
+      $dgram = stripcolors($dgram);
 
       while( $dgram =~ s/^(.*)\n// )
       {
          my $line = decode_utf8($1);
 
+         say "Received line: $line" if $$config{debug};
+
+         if ($line =~ /challenge (.+)/)
+         {
+            $$challenge = $1 if $1;
+            say "received challenge: $1" if $1;
+         }
+
          next unless (substr($line, 0, 1) eq ':');
          substr($line, 0, 1, '');
-
-         say "Received line: $line" if $$config{debug};
 
          my ($msg, $delaydelete);
          my @info = split(':', $line);
@@ -328,7 +335,7 @@ my $xonstream = IO::Async::Socket->new(
                          'fields' => [
                          {
                             'name'   => 'Info',
-                            'value'  => $$modes{$type} . ' with ' . $p . ' player'.$sp . ($bots ? (' and ' . $bots . ' bot'.$sb) : '') . ' on ' . $map . ' finished after ' . duration($maptime),
+                            'value'  => $$modes{$type} . ' on ' . $map . ' with ' . $p . ' player'.$sp . ($bots ? (' and ' . $bots . ' bot'.$sb) : '') . ' present on the server finished after ' . duration($maptime),
                             'inline' => \0,
                          },
                          ],
@@ -424,17 +431,19 @@ sub discord_on_message_create
          {
             $msg =~ s/`//g;
             $msg =~ s/%/%%/g;
+            $msg =~ s/\^/\^\^/g;
             $msg =~ s/\R/ /g;
             $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g; # user/nick, ! is quote
             $msg =~ s/<#(\d+)>/#$self->{'channelnames'}->{$1}/g; # channel
             $msg =~ s/<@&(\d+)>/\@$self->{'rolenames'}->{$1}/g; # role
             $msg =~ s/<(:.+:)\d+>/$1/g; # emoji
+            $msg = stripcolors($msg);
 
             return unless $msg;
 
             say localtime(time) . " <- <$$author{'username'}> $msg";
 
-            toxon($msg);
+            xonmsg($$author{'username'}, $msg);
          }
          elsif ( $msg =~ /^!(?:xon(?:stat)?s?|xs) (.+)/i && $channel !~ @{$$config{discord}{nocmdchans}} )
          {
@@ -532,12 +541,41 @@ sub discord_on_message_create
    return;
 }
 
-sub toxon {
+sub xonmsg
+{
+   my $usr = shift || return;
    my $msg = shift // return;
 
-   # TODO :)
+   my $line;
 
-   #$xonstream->send($msg);
+   if ($$config{smbmod})
+   {
+      $line = "ircmsg ^3(^8DISCORD^3) ^7$usr^3: ^7$msg";
+   }
+   else
+   {
+      # TODO: This crappy sv_adminnick hack
+      $line = "msg ^3(^8DISCORD^3) ^7$usr^3: ^7$msg";
+   }
+
+   if ($$config{secure} == 2) # TODO: Async wait for response with small timeout or this probably won't work
+   {
+      $xonstream->send("\377\377\377\377getchallenge");
+      return unless $challenge;
+      my $k = Digest::HMAC::hmac("$challenge $line", $$config{pass}, \&Digest::MD4::md4);
+      $xonstream->send("\377\377\377\377srcon HMAC-MD4 CHALLENGE $k $challenge $line");
+      undef $challenge;
+   }
+   elsif ($$config{secure} == 1)
+   {
+      my $t = sprintf('%ld.%06d', time, int(rand(1000000)));
+      my $k = Digest::HMAC::hmac("$t $line", $$config{pass}, \&Digest::MD4::md4);
+      $xonstream->send("\377\377\377\377srcon HMAC-MD4 TIME $k $t $line");
+   }
+   else
+   {
+      $xonstream->send("\377\377\377\377rcon $$config{pass} $line");
+   }
 
    return;
 }
@@ -592,7 +630,8 @@ sub add_guild
    return;
 }
 
-sub qfont_decode {
+sub qfont_decode
+{
    my $qstr = shift // '';
    my @chars;
 
@@ -606,6 +645,15 @@ sub qfont_decode {
    }
 
    return join '', @chars;
+}
+
+sub stripcolors
+{
+   my $str = shift // '';
+
+   $str =~ s/\^(\d|x[\dA-Fa-f]{3})//g;
+
+   return $str;
 }
 
 sub duration
