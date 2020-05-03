@@ -307,7 +307,7 @@ my $xonstream = IO::Async::Socket->new(
                {
                   $maptime = $info[2];
 
-                  $discord->status_update( { 'name' => "$2 on $map @ twlz Xonotic", type => 0 } ) unless ($2 eq $map);
+                  $discord->status_update( { 'name' => "$1 on $2 @ twlz Xonotic", type => 0 } ) unless ($2 eq $map);
                   ($type, $map) = (uc($1), $2);
 
                   if (keys %$players > 0 && $type && $map)
