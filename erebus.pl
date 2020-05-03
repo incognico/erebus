@@ -16,9 +16,11 @@
 # sv_eventlog_ipv6_delimiter 1
 # sv_logscores_bots 1
 # rcon_password <pass>
+# sv_adminnick "^8DISCORD^3" // only if server is NOT using SMB modpack
+#                            //(if you don't know what that is, you aren't)
 
 # TODO:
-# - !status command
+# - something is funky with the player/bot count
 # - endmatch statistics
 
 use v5.16.0;
@@ -50,22 +52,25 @@ $ua->timeout( 6 );
 my $self;
 
 my $config = {
-   game   => 'Xonotic @ twlz',
-   remip  => '2a02:c207:3003:5281::1',
-   locip  => undef, # undef = $remip
-   port   => 26000, # local port += 444
-   secure => 1, # rcon_secure value in server.cfg
-   smbmod => 1, # set to 1 if server uses SMB modpack (server/commands.qc)
-   pass   => '',
-   geo    => '/home/k/GeoLite2-City.mmdb',
-   debug  => 1,
+   game   => 'Xonotic @ twlz',             # Initial 'Playing' status in discord, get overwritten after a map is loaded
+   remip  => '2a02:c207:3003:5281::1',     # IP of the Xonotic server
+   port   => 26000,                        # Port of the Xonotic Server, local port = this + 444
+   locip  => undef,                        # Local IP, if undef it uses $remip
+   secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure
+   smbmod => 1,                            # Set to 1 if server uses SMB modpack, otherwise you should set sv_adminnick "^8DISCORD^3" in server.cfg
+   pass   => '',                           # rcon_password in server.cfg
+   geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
+   debug  => 0,                            # Prints incoming log lines to console if 1
 
    discord => {
-     linkchan   => 706113584626663475,
-     nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677],
-     client_id  => ,
-     owner_id   => 373912992758235148,
-   }
+     linkchan   => 706113584626663475, # The discord channel ID which will link discord and server chats
+     nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
+     client_id  => ,                   # Discord bot client ID https://discordapp.com/developers/applications/
+     owner_id   => 373912992758235148, # ID of the bots owner, not used currently
+   },
+
+   status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
+   xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
 };
 
 my $discord = Mojo::Discord->new(
@@ -313,10 +318,10 @@ my $xonstream = IO::Async::Socket->new(
             {
                if ($info[1] =~ /^([a-z]+)_(.+)$/)
                {
-                  $maptime = $info[2];
-
-                  $discord->status_update( { 'name' => "$1 on $2 @ twlz Xonotic", type => 0 } ) unless ($2 eq $map);
                   ($type, $map) = (uc($1), $2);
+                  $discord->status_update( { 'name' => "$type on $map @ twlz Xonotic", type => 0 } );
+
+                  $maptime = $info[2];
 
                   if (keys %$players > 0 && $type && $map)
                   {
@@ -334,8 +339,8 @@ my $xonstream = IO::Async::Socket->new(
                          },
                          'fields' => [
                          {
-                            'name'   => 'Info',
-                            'value'  => $$modes{$type} . ' on ' . $map . ' with ' . $p . ' player'.$sp . ($bots ? (' and ' . $bots . ' bot'.$sb) : '') . ' present on the server finished after ' . duration($maptime),
+                            'name'   => 'End of Match',
+                            'value'  => "**$$modes{$type}** on **$map**, with **$p  player$sp**" . ($bots ? (" and $bots bot$sb") : '') . ' present on the server, finished after **' . duration($maptime) . '**',
                             'inline' => \0,
                          },
                          ],
@@ -445,23 +450,41 @@ sub discord_on_message_create
 
             xonmsg($$author{'username'}, $msg);
          }
-         elsif ( $msg =~ /^!(?:xon(?:stat)?s?|xs) (.+)/i && $channel !~ @{$$config{discord}{nocmdchans}} )
+         elsif ( $channel ~~ @{$$config{discord}{nocmdchans}} )
+         {
+            return;
+         }
+         elsif ( $msg =~ /$$config{status_re}/ )
+         {
+            unless ($map && $type)
+            {
+               $discord->send_message( $channel, '`No idea yet, ask me later :D`' );
+            }
+            else
+            {
+               $discord->send_message( $channel, "Type: **$type**  Map: **$map**  Players: **" . ((keys %$players) - $bots) . '**' );
+            }
+         }
+         elsif ( $msg =~ /$$config{xonstat_re}/ )
          {
             my ($qid, $stats);
             ($qid = $1) =~ s/[^0-9]//g;
 
-            unless ($qid) {
+            unless ($qid)
+            {
                $discord->send_message( $channel, 'Invalid player ID');
                return;
             }
 
-            my $xonstaturl = 'https://stats.xonotic.org/player/';
-            my $json = get( $xonstaturl . $qid . '.json');
+            my $xonstaturl = 'http://stats.xonotic.org/player/';
+            my $json = get($xonstaturl . $qid . '.json');
 
-            if ($json) {
+            if ($json)
+            {
                $stats = decode_json($json);
             }
-            else {
+            else
+            {
                $discord->send_message( $channel, 'No response from server; Correct player ID?');
                return;
             }
@@ -488,16 +511,9 @@ sub discord_on_message_create
                   'name' => 'XonStat',
                   'url' => 'https://stats.xonotic.org',
                 },
-#               'thumbnail' => {
-#                  'url' => 'https://cdn.discordapp.com/emojis/706283635719929876.png?v=1',
-#                  'width' => 38,
-#                  'height' => 38,
-#               },
-                'image' => {
-                   'url' => "https://stats.xonotic.org/static/badges/$qid.png?" . time, # work around discord image caching
-                   'width' => 650,
-                   'height' => 70,
-                },
+               'thumbnail' => {
+                  'url' => 'https://cdn.discordapp.com/emojis/706283635719929876.png?v=1',
+               },
                 'footer' => {
                    'text' => "Last played: $lastp",
                 },
@@ -508,22 +524,42 @@ sub discord_on_message_create
                     'inline' => \1,
                  },
                  {
-                    'name'   => 'Games Played',
-                    'value'  => $games,
+                    'name'   => 'Games (W/L)',
+                    'value'  => "$games ($win/$loss)",
                     'inline' => \1,
                  },
                  {
-                    'name'   => 'Favourite Map',
-                    'value'  => sprintf('%s (%s)', $favmap, $favmapt),
+                    'name'   => 'W/L Ratio',
+                    'value'  => sprintf('%.2f%%', $pct),
                     'inline' => \1,
                  },
                  {
-                    'name'   => 'Cap Ratio',
-                    'value'  => $capr ? sprintf('%.2f', $capr) : '-',
+                    'name'   => 'Kills',
+                    'value'  => $kills,
+                    'inline' => \1,
+                 },
+                 {
+                    'name'   => 'Deaths',
+                    'value'  => $deaths,
+                    'inline' => \1,
+                 },
+                 {
+                    'name'   => 'K/D Ratio',
+                    'value'  => sprintf('%.2f%%', $ratio),
                     'inline' => \1,
                  },
                  ],
             };
+
+            push @{$$embed{'fields'}}, { 'name' => 'CTF Cap Ratio', 'value' => sprintf('%.2f', $capr), 'inline' => \1, } if $capr;
+
+            if ($elo && $elo != 100)
+            {
+               push @{$$embed{'fields'}}, { 'name' => uc($elot) . ' ELO',   'value' => sprintf('%.2f', $elo),  'inline' => \1, };
+               push @{$$embed{'fields'}}, { 'name' => uc($elot) . ' Games', 'value' => $elog,                  'inline' => \1, };
+            }
+
+            push @{$$embed{'fields'}}, { 'name' => 'Favourite Map', 'value' => sprintf('%s (%s)', $favmap, uc($favmapt)), 'inline' => \1, };
 
             my $message = {
                'content' => '',
@@ -531,9 +567,6 @@ sub discord_on_message_create
             };
 
             $discord->send_message( $channel, $message );
-
-            # TODO: change to old syntax, the image embedding thing sucks
-            # main::msg($target, "%s :: games: %d/%d/%d (%.2f%% win) :: k/d: %.2f (%d/%d)%s :: fav map: %s (%s) :: last played %s", $snick, $games, $win, $loss, $pct, $ratio, $kills, $deaths, ($elo && $elo ne 100) ? sprintf(' :: %s elo: %.2f (%d games%s)', $elot, $elo, $elog, $elot eq 'ctf' ? sprintf(', %.2f cr', $capr) : '' ) : '', $favmap, $favmapt, $last);
          }
       }
    });
@@ -554,8 +587,7 @@ sub xonmsg
    }
    else
    {
-      # TODO: This crappy sv_adminnick hack
-      $line = "msg ^3(^8DISCORD^3) ^7$usr^3: ^7$msg";
+      $line = "msg ^7$usr^3: ^7$msg";
    }
 
    if ($$config{secure} == 2) # TODO: Async wait for response with small timeout or this probably won't work
