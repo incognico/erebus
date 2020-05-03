@@ -20,7 +20,6 @@
 #                            //(if you don't know what that is, you aren't)
 
 # TODO:
-# - something is funky with the player/bot count
 # - endmatch statistics
 
 use v5.16.0;
@@ -38,7 +37,7 @@ binmode( STDOUT, ":encoding(UTF-8)" );
 #use Data::Dumper;
 use Mojo::Discord;
 use IO::Async::Loop::Mojo;
-use IO::Async::Socket;
+use IO::Async::Stream;
 use Digest::HMAC;
 use Digest::MD4;
 use MaxMind::DB::Reader;
@@ -190,20 +189,19 @@ $discord->init();
 
 my ($map, $bots, $players, $type, $maptime, $challenge) = ('', 0);
 
-my $xonstream = IO::Async::Socket->new(
-   on_recv => sub {
-      my ( $self, $dgram, $addr ) = @_;
+my $xonstream = IO::Async::Stream->new(
+   on_read => sub {
+      my ( $self, $bufref, $addr ) = @_;
 
-      $dgram =~ s/(?:\377){4}n//g;
-      $dgram = stripcolors($dgram);
+      $$bufref =~ s/(?:\377){4}n//g;
 
-      while( $dgram =~ s/^(.*)\n// )
+      while( $$bufref =~ s/^(.*?)\R// )
       {
-         my $line = decode_utf8($1);
+         my $line = decode_utf8(stripcolors($1));
 
          say "Received line: $line" if $$config{debug};
 
-         if ($line =~ /challenge (.+)/)
+         if ($line =~ /^challenge (.+)/)
          {
             $$challenge = $1 if $1;
             say "received challenge: $1" if $1;
@@ -472,7 +470,7 @@ sub discord_on_message_create
 
             unless ($qid)
             {
-               $discord->send_message( $channel, 'Invalid player ID');
+               $discord->send_message( $channel, '`Invalid player ID`');
                return;
             }
 
@@ -485,7 +483,7 @@ sub discord_on_message_create
             }
             else
             {
-               $discord->send_message( $channel, 'No response from server; Correct player ID?');
+               $discord->send_message( $channel, '`No response from server; Correct player ID?`');
                return;
             }
 
@@ -576,8 +574,8 @@ sub discord_on_message_create
 
 sub xonmsg
 {
-   my $usr = shift || return;
-   my $msg = shift // return;
+   my $usr = encode_utf8(shift) || return;
+   my $msg = encode_utf8(shift) // return;
 
    my $line;
 
@@ -592,21 +590,21 @@ sub xonmsg
 
    if ($$config{secure} == 2) # TODO: Async wait for response with small timeout or this probably won't work
    {
-      $xonstream->send("\377\377\377\377getchallenge");
+      $xonstream->write("\377\377\377\377getchallenge");
       return unless $challenge;
       my $k = Digest::HMAC::hmac("$challenge $line", $$config{pass}, \&Digest::MD4::md4);
-      $xonstream->send("\377\377\377\377srcon HMAC-MD4 CHALLENGE $k $challenge $line");
+      $xonstream->write("\377\377\377\377srcon HMAC-MD4 CHALLENGE $k $challenge $line");
       undef $challenge;
    }
    elsif ($$config{secure} == 1)
    {
       my $t = sprintf('%ld.%06d', time, int(rand(1000000)));
       my $k = Digest::HMAC::hmac("$t $line", $$config{pass}, \&Digest::MD4::md4);
-      $xonstream->send("\377\377\377\377srcon HMAC-MD4 TIME $k $t $line");
+      $xonstream->write("\377\377\377\377srcon HMAC-MD4 TIME $k $t $line");
    }
    else
    {
-      $xonstream->send("\377\377\377\377rcon $$config{pass} $line");
+      $xonstream->write("\377\377\377\377rcon $$config{pass} $line");
    }
 
    return;
