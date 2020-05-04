@@ -9,4 +9,4 @@ Discord <-> Xonotic
   - `!status`
   - `!xonstat <id>`
 
-![lol](https://i.imgur.com/IZpdKlI.jpg "lol")
+![lol](https://i.imgur.com/n43mzor.png "lol")
