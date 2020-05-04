@@ -37,7 +37,7 @@ binmode( STDOUT, ":encoding(UTF-8)" );
 #use Data::Dumper;
 use Mojo::Discord;
 use IO::Async::Loop::Mojo;
-use IO::Async::Stream;
+use IO::Async::Socket;
 use Digest::HMAC;
 use Digest::MD4;
 use MaxMind::DB::Reader;
@@ -187,15 +187,18 @@ discord_on_message_create();
 
 $discord->init();
 
-my ($map, $bots, $players, $type, $maptime, $challenge) = ('', 0);
+my ($map, $bots, $players, $type, $maptime) = ('', 0);
+my ($recvbuf, $challenge);
 
-my $xonstream = IO::Async::Stream->new(
-   on_read => sub {
-      my ( $self, $bufref, $addr ) = @_;
+my $xonstream = IO::Async::Socket->new(
+   recv_len => 1400,
 
-      $$bufref =~ s/(?:\377){4}n//g;
+   on_recv => sub {
+      my ( $self, $dgram, $addr ) = @_;
 
-      while( $$bufref =~ s/^(.*?)\R// )
+      ($recvbuf .= $dgram) =~ s/(?:\377){4}n//g;
+
+      while( $recvbuf =~ s/^(.*?)\R// )
       {
          my $line = decode_utf8(stripcolors($1));
 
@@ -596,21 +599,21 @@ sub xonmsg
 
    if ($$config{secure} == 2) # TODO: Async wait for response with small timeout or this probably won't work
    {
-      $xonstream->write("\377\377\377\377getchallenge");
+      $xonstream->send("\377\377\377\377getchallenge");
       return unless $challenge;
       my $k = Digest::HMAC::hmac("$challenge $line", $$config{pass}, \&Digest::MD4::md4);
-      $xonstream->write("\377\377\377\377srcon HMAC-MD4 CHALLENGE $k $challenge $line");
+      $xonstream->send("\377\377\377\377srcon HMAC-MD4 CHALLENGE $k $challenge $line");
       undef $challenge;
    }
    elsif ($$config{secure} == 1)
    {
       my $t = sprintf('%ld.%06d', time, int(rand(1000000)));
       my $k = Digest::HMAC::hmac("$t $line", $$config{pass}, \&Digest::MD4::md4);
-      $xonstream->write("\377\377\377\377srcon HMAC-MD4 TIME $k $t $line");
+      $xonstream->send("\377\377\377\377srcon HMAC-MD4 TIME $k $t $line");
    }
    else
    {
-      $xonstream->write("\377\377\377\377rcon $$config{pass} $line");
+      $xonstream->send("\377\377\377\377rcon $$config{pass} $line");
    }
 
    return;
