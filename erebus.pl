@@ -17,7 +17,7 @@
 # sv_logscores_bots 1
 # rcon_password <pass>
 # sv_adminnick "^8DISCORD^3" // only if server is NOT using SMB modpack
-#                            //(if you don't know what that is, you aren't)
+#                            // (if you don't know what that is, you aren't)
 
 # TODO:
 # - endmatch statistics
@@ -211,17 +211,23 @@ my $xonstream = IO::Async::Stream->new(
          substr($line, 0, 1, '');
 
          my ($msg, $delaydelete);
-         my @info = split(':', $line);
+
+         my $fields = {
+            join      => 5,
+            chat      => 3,
+            chat_spec => 3,
+            name      => 3,
+         };
+
+         my @info = (split ':', $line, $$fields{($line =~ /^([^:]*)/)[0]} || -1);
 
          given ( $info[0] )
          {
             when ( 'join' )
             {
-               $info[3] =~ s/_/:/g;
-
-               $$players{$info[1]}{slot} = $info[2];
-               $$players{$info[1]}{ip}   = $info[3];
-               $$players{$info[1]}{name} = qfont_decode(join('', @info[4..$#info]));
+                $$players{$info[1]}{slot} = $info[2];
+               ($$players{$info[1]}{ip}   = $info[3]) =~ s/_/:/g;
+                $$players{$info[1]}{name} = qfont_decode($info[4]);
 
                unless ($info[3] eq 'bot')
                {
@@ -250,15 +256,15 @@ my $xonstream = IO::Async::Stream->new(
             }
             when ( 'chat' )
             {
-               $msg = join('', @info[2..$#info]);
+               $msg = $info[2];
             }
             when ( 'chat_spec' )
             {
-               $msg = '(spectator) ' . join('', @info[2..$#info]);
+               $msg = '(spectator) ' . $info[2];
             }
             when ( 'name' )
             {
-               $$players{$info[1]}{name} = join('', @info[2..$#info]);
+               $$players{$info[1]}{name} = $info[2];
             }
             when ( 'gamestart' )
             {
@@ -527,7 +533,7 @@ sub discord_on_message_create
                     'inline' => \1,
                  },
                  {
-                    'name'   => 'W/L Ratio',
+                    'name'   => 'Won',
                     'value'  => sprintf('%.2f%%', $pct),
                     'inline' => \1,
                  },
@@ -543,7 +549,7 @@ sub discord_on_message_create
                  },
                  {
                     'name'   => 'K/D Ratio',
-                    'value'  => sprintf('%.2f%%', $ratio),
+                    'value'  => sprintf('%.2f', $ratio),
                     'inline' => \1,
                  },
                  ],
