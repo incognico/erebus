@@ -14,13 +14,21 @@
 # log_dest_udp "<locip:port>"
 # sv_eventlog 1
 # sv_eventlog_ipv6_delimiter 1
-# sv_logscores_bots 1
+# sv_logscores_bots 1 // if you want
+# rcon_secure 1 // or 2
 # rcon_password <pass>
-# sv_adminnick "^8DISCORD^3" // only if server is NOT using SMB modpack
+# sv_adminnick "^8DISCORD^3" // If the server is not using SMB modpack
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
-# - endmatch statistics
+# - endmatch statistics, formatted neatly as ascii table for ``` in discord
+# - the rcon_secure 2 challenge stuff can be improved a lot
+#   - make use of IO::Async for this and get rid of @cmdqueue
+#   - add a $challange_timeout variable
+#   - maybe save the challenge and only request a new one if needed
+#   - when it is good enough, remove $$config{secure} and always use this method
+#     and possibly fall back to method 1 if $challange_timeout is exceeded
+#   - for now it is fine as Xonotic defaults to rcon_secure 1 anyways
 
 use v5.16.0;
 
@@ -45,17 +53,16 @@ use Encode::Simple qw(encode_utf8 decode_utf8);
 use LWP::Simple qw($ua get);
 use JSON;
 
-$ua->agent( 'Mozilla/5.0' );
 $ua->timeout( 6 );
 
 my $self;
 
 my $config = {
-   game   => 'Xonotic @ twlz',             # Initial 'Playing' status in discord, get overwritten after a map is loaded
+   game   => 'Xonotic',                    # Initial 'Playing' status in discord, get overwritten after a map is loaded anyways
    remip  => '2a02:c207:3003:5281::1',     # IP of the Xonotic server
    port   => 26000,                        # Port of the Xonotic Server, local port = this + 444
    locip  => undef,                        # Local IP, if undef it uses $remip
-   secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure
+   secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
    smbmod => 1,                            # Set to 1 if server uses SMB modpack, otherwise you should set sv_adminnick "^8DISCORD^3" in server.cfg
    pass   => '',                           # rcon_password in server.cfg
    geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
@@ -86,26 +93,33 @@ my $discord = Mojo::Discord->new(
 );
 
 my $modes = {
-   'AS'   => 'Assault',
-   'CA'   => 'Clan Arena',
-   'COOP' => 'Cooperative',
-   'CQ'   => 'Conquest',
-   'CTF'  => 'Capture the Flag',
-   'CTS'  => 'Race - Complete the Stage',
-   'DM'   => 'Deathmatch',
-   'DOM'  => 'Domination',
-   'DUEL' => 'Duel',
-   'FT'   => 'Freeze Tag',
-   'INF'  => 'Infection',
-   'INV'  => 'Invasion',
-   'JB'   => 'Jailbreak',
-   'KA'   => 'Keepaway',
-   'KH'   => 'Key Hunt',
-   'LMS'  => 'Last Man Standing',
-   'NB'   => 'Nexball',
-   'ONS'  => 'Onslaught',
-   'RACE' => 'Race',
-   'TDM'  => 'Team Deathmatch',
+   'ARENA'     => 'Duel Arena',
+   'AS'        => 'Assault',
+   'CA'        => 'Clan Arena',
+   'CONQUEST'  => 'Conquest',
+   'COOP'      => 'Cooperative',
+   'CQ'        => 'Conquest',
+   'CTF'       => 'Capture the Flag',
+   'CTS'       => 'Race - Complete the Stage',
+   'DM'        => 'Deathmatch',
+   'DOM'       => 'Domination',
+   'DOTC'      => 'Defense of the Core (MOBA)',
+   'DUEL'      => 'Duel',
+   'FT'        => 'Freeze Tag',
+   'INF'       => 'Infection',
+   'INV'       => 'Invasion',
+   'JAILBREAK' => 'Jailbreak',
+   'JB'        => 'Jailbreak',
+   'KA'        => 'Keepaway',
+   'KH'        => 'Key Hunt',
+   'LMS'       => 'Last Man Standing',
+   'NB'        => 'Nexball',
+   'ONS'       => 'Onslaught',
+   'RACE'      => 'Race',
+   'RUNEMATCH' => 'Runematch',
+   'SNAFU'     => '???',
+   'TDM'       => 'Team Deathmatch',
+   'VIP'       => 'Very Important Player',
 };
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
@@ -178,6 +192,8 @@ my @qfont_unicode_glyphs = (
    "\N{U+007C}",     "\N{U+007D}",     "\N{U+007E}",     "\N{U+25C0}"
 );
 
+my $qheader = "\377\377\377\377";
+
 ###
 
 my $gi = MaxMind::DB::Reader->new(file => $$config{'geo'});
@@ -188,7 +204,7 @@ discord_on_message_create();
 $discord->init();
 
 my ($map, $bots, $players, $type, $maptime) = ('', 0);
-my ($recvbuf, $challenge);
+my ($recvbuf, @cmdqueue);
 
 my $xonstream = IO::Async::Socket->new(
    recv_len => 1400,
@@ -196,19 +212,15 @@ my $xonstream = IO::Async::Socket->new(
    on_recv => sub {
       my ( $self, $dgram, $addr ) = @_;
 
-      ($recvbuf .= $dgram) =~ s/(?:\377){4}n//g;
+      chall_recvd($1) if ($dgram =~ /^${qheader}challenge (.*?)(\0|$)/);
 
-      while( $recvbuf =~ s/^(.*?)\R// )
+      ($recvbuf .= $dgram) =~ s/${qheader}n?//g;
+
+      while( $recvbuf =~ s/^(.*?)\n// )
       {
          my $line = decode_utf8(stripcolors($1));
 
          say "Received line: $line" if $$config{debug};
-
-         if ($line =~ /^challenge (.+)/)
-         {
-            $$challenge = $1 if $1;
-            say "received challenge: $1" if $1;
-         }
 
          next unless (substr($line, 0, 1) eq ':');
          substr($line, 0, 1, '');
@@ -218,6 +230,7 @@ my $xonstream = IO::Async::Socket->new(
          my $fields = {
             join      => 5,
             chat      => 3,
+            chat_team => 4,
             chat_spec => 3,
             name      => 3,
          };
@@ -275,7 +288,7 @@ my $xonstream = IO::Async::Socket->new(
 
                if ($info[1] =~ /^([a-z]+)_(.+)$/) {
                   ($type, $map) = (uc($1), $2);
-                  $discord->status_update( { 'name' => "$type on $map @ twlz Xonotic", type => 0 } );
+                  $discord->status_update( { 'name' => "$type on $map", type => 0 } );
                }
             }
             when ( 'startdelay_ended' )
@@ -307,7 +320,7 @@ my $xonstream = IO::Async::Socket->new(
                       ],
                   };
 
-                  push @{$$embed{'fields'}}, { 'name' => 'Bots', 'value' => $bots, 'inline' => \1, } if ($bots);
+                  #push @{$$embed{'fields'}}, { 'name' => 'Bots', 'value' => $bots, 'inline' => \1, } if ($bots);
 
                   my $message = {
                      'content' => '',
@@ -326,7 +339,7 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] =~ /^([a-z]+)_(.+)$/)
                {
                   ($type, $map) = (uc($1), $2);
-                  $discord->status_update( { 'name' => "$type on $map @ twlz Xonotic", type => 0 } );
+                  $discord->status_update( { 'name' => "$type on $map", type => 0 } );
 
                   $maptime = $info[2];
 
@@ -442,7 +455,6 @@ sub discord_on_message_create
          if ( $channel eq $$config{discord}{linkchan} )
          {
             $msg =~ s/`//g;
-            $msg =~ s/%/%%/g;
             $msg =~ s/\^/\^\^/g;
             $msg =~ s/\R/ /g;
             $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g; # user/nick, ! is quote
@@ -597,26 +609,76 @@ sub xonmsg
       $line = "msg ^7$usr^3: ^7$msg";
    }
 
-   if ($$config{secure} == 2) # TODO: Async wait for response with small timeout or this probably won't work
+   if ($$config{secure} == 2)
    {
-      $xonstream->send("\377\377\377\377getchallenge");
-      return unless $challenge;
-      my $k = Digest::HMAC::hmac("$challenge $line", $$config{pass}, \&Digest::MD4::md4);
-      $xonstream->send("\377\377\377\377srcon HMAC-MD4 CHALLENGE $k $challenge $line");
-      undef $challenge;
+      push(@cmdqueue, $line);
+      $xonstream->send($qheader.'getchallenge');
    }
    elsif ($$config{secure} == 1)
    {
       my $t = sprintf('%ld.%06d', time, int(rand(1000000)));
-      my $k = Digest::HMAC::hmac("$t $line", $$config{pass}, \&Digest::MD4::md4);
-      $xonstream->send("\377\377\377\377srcon HMAC-MD4 TIME $k $t $line");
+      my $d = Digest::HMAC::hmac("$t $line", $$config{pass}, \&Digest::MD4::md4);
+      $xonstream->send($qheader."srcon HMAC-MD4 TIME $d $t $line");
    }
    else
    {
-      $xonstream->send("\377\377\377\377rcon $$config{pass} $line");
+      die("If you really want to send your rcon password in plaintext then remove this line.\n");
+      $xonstream->send($qheader."rcon $$config{pass} $line");
    }
 
    return;
+}
+
+sub chall_recvd
+{
+   my $c = shift || return;
+
+   my $line = shift(@cmdqueue);
+   my $d = Digest::HMAC::hmac("$c $line", $$config{pass}, \&Digest::MD4::md4);
+ 
+   $xonstream->send($qheader."srcon HMAC-MD4 CHALLENGE $d $c $line");
+
+   return;
+}
+
+sub qfont_decode
+{
+   my $qstr = shift // '';
+   my @chars;
+
+   for (split('', $qstr)) {
+      my $i = ord($_) - 0xE000;
+      my $c = ($_ ge "\N{U+E000}" && $_ le "\N{U+E0FF}")
+      ? $qfont_unicode_glyphs[$i % @qfont_unicode_glyphs]
+      : $_;
+      #printf "<$_:$c|ord:%d>", ord;
+      push @chars, $c if defined $c;
+   }
+
+   return join '', @chars;
+}
+
+sub stripcolors
+{
+   my $str = shift // '';
+
+   $str =~ s/\^(\d|x[\dA-Fa-f]{3})//g;
+
+   return $str;
+}
+
+sub duration
+{
+   my $sec = shift || return 0;
+
+   my @gmt = gmtime($sec);
+
+   $gmt[5] -= 70;
+
+   return ($gmt[7] ?  $gmt[7]                                          .'d' : '').
+          ($gmt[2] ? ($gmt[7]                       ? ' ' : '').$gmt[2].'h' : '').
+          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ' ' : '').$gmt[1].'m' : '').
+          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ' ' : '').$gmt[0].'s' : '');
 }
 
 sub discord_on_ready
@@ -667,44 +729,4 @@ sub add_guild
    }
 
    return;
-}
-
-sub qfont_decode
-{
-   my $qstr = shift // '';
-   my @chars;
-
-   for (split('', $qstr)) {
-      my $i = ord($_) - 0xE000;
-      my $c = ($_ ge "\N{U+E000}" && $_ le "\N{U+E0FF}")
-      ? $qfont_unicode_glyphs[$i % @qfont_unicode_glyphs]
-      : $_;
-      #printf "<$_:$c|ord:%d>", ord;
-      push @chars, $c if defined $c;
-   }
-
-   return join '', @chars;
-}
-
-sub stripcolors
-{
-   my $str = shift // '';
-
-   $str =~ s/\^(\d|x[\dA-Fa-f]{3})//g;
-
-   return $str;
-}
-
-sub duration
-{
-   my $sec = shift || return 0;
-
-   my @gmt = gmtime($sec);
-
-   $gmt[5] -= 70;
-
-   return ($gmt[7] ?  $gmt[7]                                          .'d' : '').
-          ($gmt[2] ? ($gmt[7]                       ? ' ' : '').$gmt[2].'h' : '').
-          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ' ' : '').$gmt[1].'m' : '').
-          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ' ' : '').$gmt[0].'s' : '');
 }
