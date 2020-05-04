@@ -73,6 +73,8 @@ my $config = {
      nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
      client_id  => ,                   # Discord bot client ID https://discordapp.com/developers/applications/
      owner_id   => 373912992758235148, # ID of the bots owner, not used currently
+     joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji  if not empty ('') those will be displayed between the country flag
+     partmoji   => '<:gtfo:603609334781313037>',     # Part emoji  and the players nickname when joining or leaving the server
    },
 
    status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
@@ -399,8 +401,8 @@ my $xonstream = IO::Async::Socket->new(
 
             my $final = "`$$players{$info[1]}{name}`  $msg";
 
-            $final =~ s/^/<:gtfo:603609334781313037> / if ($info[0] eq 'part');
-            $final =~ s/^/<:NyanPasu:562191812702240779> / if ($info[0] eq 'join');
+            $final =~ s/^/$$config{discord}{partmoji} / if ($$config{discord}{partmoji} && $info[0] eq 'part');
+            $final =~ s/^/$$config{discord}{joinmoji} / if ($$config{discord}{joinmoji} && $info[0] eq 'join');
 
             $discord->send_message( $$config{discord}{linkchan}, ':flag_' . $$players{$info[1]}{geo} . ': ' . $final );
          }
