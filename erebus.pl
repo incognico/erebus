@@ -91,7 +91,6 @@ my $discord = Mojo::Discord->new(
    'logdir'    => "$ENV{HOME}/.xonotic",
    'logfile'   => 'discord.log',
    'loglevel'  => 'info',
-   'rate_limits' => 0, # until Mojo::Discord is fixed
 );
 
 my $modes = {
@@ -118,6 +117,8 @@ my $modes = {
    'NB'        => 'Nexball',
    'ONS'       => 'Onslaught',
    'RACE'      => 'Race',
+   'RC'        => 'Race',
+   'RUNE'      => 'Runematch',
    'RUNEMATCH' => 'Runematch',
    'SNAFU'     => '???',
    'TDM'       => 'Team Deathmatch',
@@ -222,12 +223,7 @@ my $xonstream = IO::Async::Socket->new(
       {
          my $line = decode_utf8(stripcolors($1));
 
-         say "Received line: $line" if $$config{debug};
-
-         next unless (substr($line, 0, 1) eq ':');
-         substr($line, 0, 1, '');
-
-         my ($msg, $delaydelete);
+         next unless (substr($line, 0, 1, '') eq ':');
 
          my $fields = {
             join      => 5,
@@ -238,6 +234,11 @@ my $xonstream = IO::Async::Socket->new(
          };
 
          my @info = (split ':', $line, $$fields{($line =~ /^([^:]*)/)[0]} || -1);
+
+         next if ($info[0] eq 'anticheat');
+         say localtime . " -- Key: $info[0] | Fields: @info[1..$#info]" if $$config{debug};
+
+         my ($msg, $delaydelete);
 
          given ( $info[0] )
          {
@@ -263,13 +264,16 @@ my $xonstream = IO::Async::Socket->new(
             {
                $delaydelete = $info[1];
 
-               unless (exists $$players{$info[1]} && $$players{$info[1]}{ip} eq 'bot')
+               if (exists $$players{$info[1]})
                {
-                  $msg = 'has left the game';
-               }
-               else
-               {
-                  $bots--;
+                  unless ($$players{$info[1]}{ip} eq 'bot')
+                  {
+                     $msg = 'has left the game';
+                  }
+                  else
+                  {
+                     $bots--;
+                  }
                }
             }
             when ( 'chat' )
@@ -459,10 +463,14 @@ sub discord_on_message_create
             $msg =~ s/`//g;
             $msg =~ s/\^/\^\^/g;
             $msg =~ s/\R/ /g;
-            $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g; # user/nick, ! is quote
+            if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
+            {
+               # sensible quotes ingame
+               $msg =~ s/\@$self->{'users'}->{$1}->{'username'}/ << / if ($1 == $self->{'id'});
+            }
             $msg =~ s/<#(\d+)>/#$self->{'channelnames'}->{$1}/g; # channel
             $msg =~ s/<@&(\d+)>/\@$self->{'rolenames'}->{$1}/g; # role
-            $msg =~ s/<(:.+:)\d+>/$1/g; # emoji
+            $msg =~ s/<a?(:.+:)\d+>/$1/g; # emoji
             $msg = stripcolors($msg);
 
             return unless $msg;
