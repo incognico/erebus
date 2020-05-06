@@ -21,7 +21,6 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
-# - endmatch statistics, formatted neatly as ascii table for ``` in discord
 # - the rcon_secure 2 challenge stuff can be improved a lot
 #   - make use of IO::Async for this and get rid of @cmdqueue
 #   - add a $challange_timeout variable
@@ -50,6 +49,7 @@ use Digest::HMAC;
 use Digest::MD4;
 use MaxMind::DB::Reader;
 use Encode::Simple qw(encode_utf8 decode_utf8);
+use Text::ASCIITable;
 use LWP::Simple qw($ua get);
 use JSON;
 
@@ -206,7 +206,7 @@ discord_on_message_create();
 
 $discord->init();
 
-my ($map, $bots, $players, $type, $maptime) = ('', 0);
+my ($map, $bots, $players, $type, $maptime, @pscorelabels, $pscoreflags, $pscores) = ('', 0);
 my ($recvbuf, @cmdqueue);
 
 my $xonstream = IO::Async::Socket->new(
@@ -226,11 +226,12 @@ my $xonstream = IO::Async::Socket->new(
          next unless (substr($line, 0, 1, '') eq ':');
 
          my $fields = {
-            join      => 5,
             chat      => 3,
-            chat_team => 4,
             chat_spec => 3,
+            chat_team => 4,
+            join      => 5,
             name      => 3,
+            player    => 7,
          };
 
          my @info = (split ':', $line, $$fields{($line =~ /^([^:]*)/)[0]} || -1);
@@ -254,6 +255,7 @@ my $xonstream = IO::Async::Socket->new(
                   $$players{$info[1]}{geo} = $r->{country}{iso_code} ? lc($r->{country}{iso_code}) : 'white';
 
                   $msg = 'has joined the game';
+                  # TODO: Don't announce joins for players who were present the last match
                }
                else
                {
@@ -290,7 +292,7 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'gamestart' )
             {
-               ($players, $bots) = ({}, 0);
+               ($players, @pscorelabels, $pscoreflags, $pscores, $bots) = ({}, (), '', {}, 0);
 
                if ($info[1] =~ /^([a-z]+)_(.+)$/) {
                   ($type, $map) = (uc($1), $2);
@@ -349,37 +351,126 @@ my $xonstream = IO::Async::Socket->new(
 
                   $maptime = $info[2];
 
-                  if (keys %$players > 0 && $type && $map)
+#                  if ($players && $type && $map)
+#                  {
+#                     my $p = (keys %$players) - $bots;
+#
+#                     my ($sp, $sb) = ('', '');
+#                     $sp = 's' if ($p != 1);
+#                     $sb = 's' if ($bots != 1);
+#
+#                     my $embed = {
+#                        'color' => '3447003',
+#                        'provider' => {
+#                           'name' => 'twlz',
+#                           'url' => 'https://xonotic.lifeisabug.com',
+#                         },
+#                         'fields' => [
+#                         {
+#                            'name'   => 'End of Match',
+#                            'value'  => "**$$modes{$type}** on **$map**, with **$p  player$sp**" . ($bots ? (" and $bots bot$sb") : '') . ' present on the server, finished after **' . duration($maptime) . '**',
+#                            'inline' => \0,
+#                         },
+#                         ],
+#                     };
+#
+#                     my $message = {
+#                        'content' => '',
+#                        'embed' => $embed,
+#                     };
+#
+#                     $discord->send_message( $$config{discord}{linkchan}, $message );
+#                  }
+               }
+            }
+            when ( 'labels' )
+            {
+               if ($info[1] eq 'player')
+               {
+                  @pscorelabels = split(',', $info[2]);
+
+                  # map(s/^(.+?)[!<]+$/$1/, @titles);
+                  for (0..$#pscorelabels)
                   {
-                     my $p = (keys %$players) - $bots;
-
-                     my ($sp, $sb) = ('', '');
-                     $sp = 's' if ($p != 1);
-                     $sb = 's' if ($bots != 1);
-
-                     my $embed = {
-                        'color' => '3447003',
-                        'provider' => {
-                           'name' => 'twlz',
-                           'url' => 'https://xonotic.lifeisabug.com',
-                         },
-                         'fields' => [
-                         {
-                            'name'   => 'End of Match',
-                            'value'  => "**$$modes{$type}** on **$map**, with **$p  player$sp**" . ($bots ? (" and $bots bot$sb") : '') . ' present on the server, finished after **' . duration($maptime) . '**',
-                            'inline' => \0,
-                         },
-                         ],
-                     };
-
-                     my $message = {
-                        'content' => '',
-                        'embed' => $embed,
-                     };
-
-                     $discord->send_message( $$config{discord}{linkchan}, $message );
+                     if ($pscorelabels[$_] =~ /^([a-z]+)([!<]+)$/)
+                     {
+                        $pscorelabels[$_] = $1;
+                        $pscoreflags      = $2 if ($1 eq 'score');
+                     }
                   }
                }
+            }
+            when ( 'player' )
+            {
+               if ($info[1] eq 'see-labels')
+               {
+                  next if ($info[4] eq 'spectator');
+
+                  my @score = split(',', $info[2]);
+
+                  for my $i (0..$#score)
+                  {
+                     $$pscores{$info[5]}{$pscorelabels[$i]} = $score[$i] if $pscorelabels[$i];
+                  }
+
+                  $$pscores{$info[5]}{playtime} = $info[3];
+                  $$pscores{$info[5]}{name}     = qfont_decode($info[6]);
+               }
+            }
+            when ( 'end' )
+            {
+               return unless $pscores;
+
+               my @pkeys = keys(%$pscores);
+
+               my $heading = 'Scoreboard';
+               $heading .= " for $type on $map" if ($type && $map);
+               $heading .= "\nPlayers: " . scalar(@pkeys) . ($maptime ? (' - Match duration: ' . duration($maptime)) : '');
+
+               my $table = Text::ASCIITable->new({ headingText => $heading });
+               my @cols  = grep(length, @pscorelabels);
+
+               $table->setCols('NAME', (map(uc, @cols)), 'TIME');
+
+               # TODO:$pscoreflags
+               for my $id (sort {$$pscores{$b}{score} <=> $$pscores{$a}{score}} @pkeys)
+               {
+                  my @row;
+
+                  $$pscores{$id}{name} =~ s/[^\x00-\xFF]/ /g;
+                  $$pscores{$id}{name} =~ s/\s+/ /g;
+
+                  push(@row, $$pscores{$id}{name});
+
+                  for (@cols)
+                  {
+                     given ( $_ )
+                     {
+                        when ( /dmg(taken)?/ )
+                        {
+                           push(@row, sprintf('%.2f k', $$pscores{$id}{$_}/1000));
+                        }
+                        when ( 'elo' )
+                        {
+                           push(@row, $$pscores{$id}{$_} < 0 ? '-' : int($$pscores{$id}{$_}));
+                        }
+                        when ( 'fps' )
+                        {
+                           push(@row, $$pscores{$id}{$_} == 0 ? '-' : $$pscores{$id}{$_})
+                        }
+                        default
+                        {
+                           push(@row, $$pscores{$id}{$_});
+                        }
+                     }
+                  }
+
+                  push(@row, duration($$pscores{$id}{playtime}));
+
+                  $table->addRow(@row);
+               }
+
+               $discord->send_message( $$config{discord}{linkchan}, "```\n$table```" );
             }
             when ( 'vote' )
             {
@@ -395,6 +486,7 @@ my $xonstream = IO::Async::Socket->new(
          {
             return unless (exists $$players{$info[1]});
 
+            $msg =~ s/(\s|\R)+/ /g;
             $msg =~ s/\@+everyone/everyone/g;
             $msg =~ s/\@+here/here/g;
             $msg =~ s/$discord_markdown_pattern/\\$1/g;
