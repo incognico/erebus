@@ -9,6 +9,7 @@ Discord <-> Xonotic
 - Commands
   - `!status`
   - `!xonstat <id>`
+  - `!rcon <cmd>` (for owner only)
 
 ![lol](https://i.imgur.com/n43mzor.png "lol")
 ![scores](https://i.imgur.com/Prg4JeL.png "scores")

@@ -21,6 +21,8 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
+# - Test other gamemodes with the score table
+# - $tscore* (team scoring)
 # - the rcon_secure 2 challenge stuff can be improved a lot
 #   - make use of IO::Async for this and get rid of @cmdqueue
 #   - add a $challange_timeout variable
@@ -49,7 +51,7 @@ use Digest::HMAC;
 use Digest::MD4;
 use MaxMind::DB::Reader;
 use Encode::Simple qw(encode_utf8 decode_utf8);
-use Text::ASCIITable;
+use Text::ANSITable;
 use LWP::Simple qw($ua get);
 use JSON;
 
@@ -72,13 +74,14 @@ my $config = {
      linkchan   => 706113584626663475, # The discord channel ID which will link discord and server chats
      nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
      client_id  => ,                   # Discord bot client ID https://discordapp.com/developers/applications/
-     owner_id   => 373912992758235148, # ID of the bots owner, not used currently
+     owner_id   => 373912992758235148, # ID of the bots owner, if not 0 this allows the owner to use the !rcon command
      joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji  if not empty ('') those will be displayed between the country flag
      partmoji   => '<:gtfo:603609334781313037>',     # Part emoji  and the players nickname when joining or leaving the server
    },
 
    status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
    xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
+   rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 };
 
 my $discord = Mojo::Discord->new(
@@ -206,8 +209,9 @@ discord_on_message_create();
 
 $discord->init();
 
-my ($map, $bots, $players, $type, $maptime, @pscorelabels, $pscoreflags, $pscores) = ('', 0);
 my ($recvbuf, @cmdqueue);
+my ($map, $bots, $players, $type, $maptime, @pscorelabels, $pscoreflags, $pscores, @lastplayers) = ('', 0);
+sub reset_players { ($bots, $players, @pscorelabels, $pscoreflags, $pscores) = (0, {}, (), '', {}); return; }
 
 my $xonstream = IO::Async::Socket->new(
    recv_len => 1400,
@@ -234,10 +238,10 @@ my $xonstream = IO::Async::Socket->new(
             player    => 7,
          };
 
-         my @info = (split ':', $line, $$fields{($line =~ /^([^:]*)/)[0]} || -1);
+         my @info = (split /:/, $line, $$fields{($line =~ /^([^:]*)/)[0]} || -1);
 
          next if ($info[0] eq 'anticheat');
-         say localtime . " -- Key: $info[0] | Fields: @info[1..$#info]" if $$config{debug};
+         say localtime(time) . " -- Key: $info[0] | Fields: @info[1..$#info]" if $$config{debug};
 
          my ($msg, $delaydelete);
 
@@ -254,8 +258,7 @@ my $xonstream = IO::Async::Socket->new(
                   my $r = $gi->record_for_address($$players{$info[1]}{ip});
                   $$players{$info[1]}{geo} = $r->{country}{iso_code} ? lc($r->{country}{iso_code}) : 'white';
 
-                  $msg = 'has joined the game';
-                  # TODO: Don't announce joins for players who were present the last match
+                  $msg = 'has joined the game' unless ($info[1] ~~ @lastplayers);
                }
                else
                {
@@ -292,7 +295,7 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'gamestart' )
             {
-               ($players, @pscorelabels, $pscoreflags, $pscores, $bots) = ({}, (), '', {}, 0);
+               reset_players();
 
                if ($info[1] =~ /^([a-z]+)_(.+)$/) {
                   ($type, $map) = (uc($1), $2);
@@ -301,6 +304,8 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'startdelay_ended' )
             {
+               @lastplayers = ();
+
                if (keys %$players > 0 && $type && $map)
                {
                   my $embed = {
@@ -344,50 +349,19 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'scores' )
             {
+               $maptime = $info[2];
+
                if ($info[1] =~ /^([a-z]+)_(.+)$/)
                {
                   ($type, $map) = (uc($1), $2);
                   $discord->status_update( { 'name' => "$type on $map", type => 0 } );
-
-                  $maptime = $info[2];
-
-#                  if ($players && $type && $map)
-#                  {
-#                     my $p = (keys %$players) - $bots;
-#
-#                     my ($sp, $sb) = ('', '');
-#                     $sp = 's' if ($p != 1);
-#                     $sb = 's' if ($bots != 1);
-#
-#                     my $embed = {
-#                        'color' => '3447003',
-#                        'provider' => {
-#                           'name' => 'twlz',
-#                           'url' => 'https://xonotic.lifeisabug.com',
-#                         },
-#                         'fields' => [
-#                         {
-#                            'name'   => 'End of Match',
-#                            'value'  => "**$$modes{$type}** on **$map**, with **$p  player$sp**" . ($bots ? (" and $bots bot$sb") : '') . ' present on the server, finished after **' . duration($maptime) . '**',
-#                            'inline' => \0,
-#                         },
-#                         ],
-#                     };
-#
-#                     my $message = {
-#                        'content' => '',
-#                        'embed' => $embed,
-#                     };
-#
-#                     $discord->send_message( $$config{discord}{linkchan}, $message );
-#                  }
                }
             }
             when ( 'labels' )
             {
                if ($info[1] eq 'player')
                {
-                  @pscorelabels = split(',', $info[2]);
+                  @pscorelabels = split(/,/, $info[2]);
 
                   # map(s/^(.+?)[!<]+$/$1/, @titles);
                   for (0..$#pscorelabels)
@@ -406,7 +380,7 @@ my $xonstream = IO::Async::Socket->new(
                {
                   next if ($info[4] eq 'spectator');
 
-                  my @score = split(',', $info[2]);
+                  my @score = split(/,/, $info[2]);
 
                   for my $i (0..$#score)
                   {
@@ -420,33 +394,39 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'end' )
             {
                return unless $pscores;
+               # TODO: Don't show scores of pure botmatches
 
                my @pkeys = keys(%$pscores);
 
-               my $heading = 'Scoreboard';
-               $heading .= " for $type on $map" if ($type && $map);
-               $heading .= "\nPlayers: " . scalar(@pkeys) . ($maptime ? (' - Match duration: ' . duration($maptime)) : '');
+               my $heading = '>>> Scores';
+               $heading   .= " for $type on $map" if ($type && $map);
+               $heading   .= " / Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
 
-               my $table = Text::ASCIITable->new({ headingText => $heading });
-               my @cols  = grep(length, @pscorelabels);
+               my $table = Text::ANSITable->new(use_box_chars => 0, use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle'); # show_row_separator => 1
+               my @cols  = grep { length } @pscorelabels;
 
-               $table->setCols('NAME', (map(uc, @cols)), 'TIME');
+               $table->columns(['NAME', (map { uc } @cols), 'TIME']);
+               $table->set_column_style($_ => type => 'num') for qw(ELO DMG DMGTAKEN FPS);
 
-               # TODO:$pscoreflags
-               for my $id (sort {$$pscores{$b}{score} <=> $$pscores{$a}{score}} @pkeys)
+               my @pkeys_sorted = sort {$$pscores{$b}{score} <=> $$pscores{$a}{score}} @pkeys;
+               @pkeys_sorted    = reverse(@pkeys_sorted) if ($pscoreflags =~ /</);
+
+               for my $id (@pkeys_sorted)
                {
                   my @row;
 
-                  $$pscores{$id}{name} =~ s/[^\x00-\xFF]/ /g;
+                  # Discords stupid font misaligns the table with wide chars
+                  $$pscores{$id}{name} =~ s/[^\x00-\xFF]/\*/g;
                   $$pscores{$id}{name} =~ s/\s+/ /g;
 
-                  push(@row, $$pscores{$id}{name});
+                  push(@row, $$pscores{$id}{name}); # TODO: truncate_egc() ?
 
                   for (@cols)
                   {
+                     #TODO: Use Text::ANSITable methods for formatting columns?
                      given ( $_ )
                      {
-                        when ( /dmg(taken)?/ )
+                        when ( /dmg(?:taken)?/ )
                         {
                            push(@row, sprintf('%.2f k', $$pscores{$id}{$_}/1000));
                         }
@@ -467,10 +447,17 @@ my $xonstream = IO::Async::Socket->new(
 
                   push(@row, duration($$pscores{$id}{playtime}));
 
-                  $table->addRow(@row);
+                  $table->add_row(\@row);
                }
 
-               $discord->send_message( $$config{discord}{linkchan}, "```\n$table```" );
+               my $text = $table->draw;
+
+               $discord->send_message( $$config{discord}{linkchan}, "```\n$heading\n$text```" );
+
+               say localtime(time) . "\n$heading\n$text";
+
+               reset_players();
+               @lastplayers = @pkeys_sorted; # does not include spectators but meh
             }
             when ( 'vote' )
             {
@@ -505,7 +492,7 @@ my $xonstream = IO::Async::Socket->new(
 
          delete $$players{$delaydelete} if (defined $delaydelete);
       }
-   },
+   }
 );
 
 my $loop = IO::Async::Loop::Mojo->new();
@@ -552,6 +539,18 @@ sub discord_on_message_create
 
          if ( $channel eq $$config{discord}{linkchan} )
          {
+
+            if ( $msg =~ /$$config{rcon_re}/i && $id == $$config{discord}{owner_id} )
+            {
+               return unless $1;
+
+               rcon($1);
+               $discord->send_message( $channel, '`sent`' );
+               say localtime(time) . " !! RCON used by: <$$author{'username'}> Command: $1" unless ($1 =~ /rcon_password /);
+
+               return;
+            }
+
             $msg =~ s/`//g;
             $msg =~ s/\^/\^\^/g;
             $msg =~ s/\R/ /g;
@@ -697,19 +696,17 @@ sub discord_on_message_create
 
 sub xonmsg
 {
-   my $usr = encode_utf8(shift) || return;
-   my $msg = encode_utf8(shift) // return;
+   my $usr = shift || return;
+   my $msg = shift // return;
 
-   my $line;
+   rcon($$config{smbmod} ? "ircmsg ^3(^8DISCORD^3) ^7$usr^3: ^7$msg" : "msg ^7$usr^3: ^7$msg");
 
-   if ($$config{smbmod})
-   {
-      $line = "ircmsg ^3(^8DISCORD^3) ^7$usr^3: ^7$msg";
-   }
-   else
-   {
-      $line = "msg ^7$usr^3: ^7$msg";
-   }
+   return;
+}
+
+sub rcon
+{
+   my $line = encode_utf8(shift) || return;
 
    if ($$config{secure} == 2)
    {
@@ -724,7 +721,7 @@ sub xonmsg
    }
    else
    {
-      die("If you really want to send your rcon password in plaintext then remove this line.\n");
+      say 'WARNING: Using plain text rcon_password, consider using rcon_secure >= 1';
       $xonstream->send($qheader."rcon $$config{pass} $line");
    }
 
