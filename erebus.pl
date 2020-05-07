@@ -261,8 +261,8 @@ discord_on_message_create();
 $discord->init();
 
 my ($recvbuf, @cmdqueue);
-my ($matchid, $map, $bots, $players, $type, $instagib, $maptime, @pscorelabels, $pscoreflags, $pscores, $teamplay, @lastplayers, $recordset)
-=  ('',       '',   0,     {},       '',    0,         0,        (),            '',           {},       0,         (),           {}        );
+my ($matchid, $map, $bots, $players, $type, $instagib, $maptime, @pscorelabels, $pscoreflags, $pscores, $teamplay, @lastplayers)
+=  ('',       '',   0,     {},       '',    0,         0,        (),            '',           {},       0,         (),         );
 
 my $xonstream = IO::Async::Socket->new(
    recv_len => 1400,
@@ -358,7 +358,7 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'gamestart' )
             {
-               ($bots, $players, @pscorelabels, $pscoreflags, $pscores, $teamplay, $recordset) = (0, {}, (), '', {}, 0, {});
+               ($bots, $players, @pscorelabels, $pscoreflags, $pscores, $teamplay) = (0, {}, (), '', {}, 0);
 
                $matchid = $info[2];
 
@@ -449,7 +449,7 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'recordset' )
             {
-               $$recordset{$info[1]} = $info[2];
+               $$players{$info[1]}{recordset} = $info[2];
             }
             when ( 'player' )
             {
@@ -480,7 +480,7 @@ my $xonstream = IO::Async::Socket->new(
                $heading   .= ' <<<';
 
                # Default::csingle looks better but uses more chars
-               my $table = Text::ANSITable->new(use_box_chars => 0, use_utf8 => 1, wide => 0, use_color => 0, border_style => 'Default::singlei_utf8'); # show_row_separator => 1
+               my $table = Text::ANSITable->new(use_box_chars => 0, use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8'); # show_row_separator => 1
                my @cols  = grep { length && !/^FPS/ } @pscorelabels;
                @cols     = grep { !/^TEAMKILLS/ } @cols unless $teamplay;
 
@@ -551,8 +551,8 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] eq 'capture')
                {
                   $info[1] = $info[4];
-                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$recordset{$info[4]} ? sprintf(' in %.3f seconds!', $$recordset{$info[4]}) : '');
-                  delete $$recordset{$info[3]};
+                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$players{$info[4]}{recordset} ? sprintf(' in %.3f seconds!', $$players{$info[4]}{recordset} : '');
+                  delete $$players{$info[4]}{recordset};
                }
             }
             when ( 'vote' )
