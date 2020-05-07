@@ -21,8 +21,10 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
-# - Test other gamemodes with the score table
-# - $tscore* (team scoring)
+# - fix LMS rank (pscoreflags primary/secondary)
+# - split endmatch scoreboard before $discord_char_limit on newline
+# - $tscore* (team scoring) + sort scoreboard in teams with line sep or 1 msg per team
+# - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
 #   - make use of IO::Async for this and get rid of @cmdqueue
 #   - add a $challange_timeout variable
@@ -51,6 +53,7 @@ use Digest::HMAC;
 use Digest::MD4;
 use MaxMind::DB::Reader;
 use Encode::Simple qw(encode_utf8 decode_utf8);
+use Unicode::Truncate;
 use Text::ANSITable;
 use LWP::Simple qw($ua get);
 use JSON;
@@ -96,6 +99,16 @@ my $discord = Mojo::Discord->new(
    'loglevel'  => 'info',
 );
 
+my $teams = {
+       -1 => 'NONE',
+        1 => 'NONE',
+        5 => 'RED',
+       10 => 'PINK',
+       13 => 'YELLOW',
+       14 => 'BLUE',
+spectator => 'SPECTATOR',
+};
+
 my $modes = {
    'ARENA'     => 'Duel Arena',
    'AS'        => 'Assault',
@@ -127,6 +140,8 @@ my $modes = {
    'TDM'       => 'Team Deathmatch',
    'VIP'       => 'Very Important Player',
 };
+
+my $discord_char_limit = 2000;
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
 my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||__|\*|~|>)/;
@@ -198,6 +213,42 @@ my @qfont_unicode_glyphs = (
    "\N{U+007C}",     "\N{U+007D}",     "\N{U+007E}",     "\N{U+25C0}"
 );
 
+my @qfont_ascii_table = (
+ '\0', '#',  '#',  '#',  '#',  '.',  '#',  '#',
+ '#',  '\t', '\n', '#',  ' ',  '\r', '.',  '.',
+ '[',  ']',  '0',  '1',  '2',  '3',  '4',  '5',
+ '6',  '7',  '8',  '9',  '.',  '<',  '=',  '>',
+ ' ',  '!',  '"',  '#',  '$',  '%',  '&',  '\'',
+ '(',  ')',  '*',  '+',  ',',  '-',  '.',  '/',
+ '0',  '1',  '2',  '3',  '4',  '5',  '6',  '7',
+ '8',  '9',  ':',  ';',  '<',  '=',  '>',  '?',
+ '@',  'A',  'B',  'C',  'D',  'E',  'F',  'G',
+ 'H',  'I',  'J',  'K',  'L',  'M',  'N',  'O',
+ 'P',  'Q',  'R',  'S',  'T',  'U',  'V',  'W',
+ 'X',  'Y',  'Z',  '[',  '\\', ']',  '^',  '_',
+ '`',  'a',  'b',  'c',  'd',  'e',  'f',  'g',
+ 'h',  'i',  'j',  'k',  'l',  'm',  'n',  'o',
+ 'p',  'q',  'r',  's',  't',  'u',  'v',  'w',
+ 'x',  'y',  'z',  '{',  '|',  '}',  '~',  '<',
+
+ '<',  '=',  '>',  '#',  '#',  '.',  '#',  '#',
+ '#',  '#',  ' ',  '#',  ' ',  '>',  '.',  '.',
+ '[',  ']',  '0',  '1',  '2',  '3',  '4',  '5',
+ '6',  '7',  '8',  '9',  '.',  '<',  '=',  '>',
+ ' ',  '!',  '"',  '#',  '$',  '%',  '&',  '\'',
+ '(',  ')',  '*',  '+',  ',',  '-',  '.',  '/',
+ '0',  '1',  '2',  '3',  '4',  '5',  '6',  '7',
+ '8',  '9',  ':',  ';',  '<',  '=',  '>',  '?',
+ '@',  'A',  'B',  'C',  'D',  'E',  'F',  'G',
+ 'H',  'I',  'J',  'K',  'L',  'M',  'N',  'O',
+ 'P',  'Q',  'R',  'S',  'T',  'U',  'V',  'W',
+ 'X',  'Y',  'Z',  '[',  '\\', ']',  '^',  '_',
+ '`',  'a',  'b',  'c',  'd',  'e',  'f',  'g',
+ 'h',  'i',  'j',  'k',  'l',  'm',  'n',  'o',
+ 'p',  'q',  'r',  's',  't',  'u',  'v',  'w',
+ 'x',  'y',  'z',  '{',  '|',  '}',  '~',  '<'
+);
+
 my $qheader = "\377\377\377\377";
 
 ###
@@ -210,8 +261,8 @@ discord_on_message_create();
 $discord->init();
 
 my ($recvbuf, @cmdqueue);
-my ($map, $bots, $players, $type, $maptime, @pscorelabels, $pscoreflags, $pscores, @lastplayers) = ('', 0);
-sub reset_players { ($bots, $players, @pscorelabels, $pscoreflags, $pscores) = (0, {}, (), '', {}); return; }
+my ($matchid, $map, $bots, $players, $type, $instagib, $maptime, @pscorelabels, $pscoreflags, $pscores, $teamplay, @lastplayers, $recordset)
+=  ('',       '',   0,     {},       '',    0,         0,        (),            '',           {},       0,         (),           {}        );
 
 my $xonstream = IO::Async::Socket->new(
    recv_len => 1400,
@@ -289,18 +340,36 @@ my $xonstream = IO::Async::Socket->new(
             {
                $msg = '(spectator) ' . $info[2];
             }
+            when ( 'chat_team' )
+            {
+               next; # we don't show team chat
+               $msg = "($$teams{$info[2]}) $info[3]";
+            }
             when ( 'name' )
             {
                $$players{$info[1]}{name} = $info[2];
             }
+            when ( 'gameinfo' )
+            {
+               if ($info[1] eq 'mutators' && $info[2] eq 'LIST')
+               {
+                  $instagib = 'instagib' ~~ @info[3..$#info] ? 1 : 0;
+               }
+            }
             when ( 'gamestart' )
             {
-               reset_players();
+               ($bots, $players, @pscorelabels, $pscoreflags, $pscores, $teamplay, $recordset) = (0, {}, (), '', {}, 0, {});
+
+               $matchid = $info[2];
 
                if ($info[1] =~ /^([a-z]+)_(.+)$/) {
                   ($type, $map) = (uc($1), $2);
                   $discord->status_update( { 'name' => "$type on $map", type => 0 } );
                }
+            }
+            when ( 'gameover' )
+            {
+               $matchid  = 'intermission';
             }
             when ( 'startdelay_ended' )
             {
@@ -317,7 +386,7 @@ my $xonstream = IO::Async::Socket->new(
                       'fields' => [
                       {
                          'name'   => 'Type',
-                         'value'  => $type,
+                         'value'  => $type . ($instagib ? ' (InstaGib)' : ''),
                          'inline' => \1,
                       },
                       {
@@ -361,18 +430,26 @@ my $xonstream = IO::Async::Socket->new(
             {
                if ($info[1] eq 'player')
                {
-                  @pscorelabels = split(/,/, $info[2]);
+                  @pscorelabels = map { uc } split(/,/, $info[2]);
 
                   # map(s/^(.+?)[!<]+$/$1/, @titles);
                   for (0..$#pscorelabels)
                   {
-                     if ($pscorelabels[$_] =~ /^([a-z]+)([!<]+)$/)
+                     if ($pscorelabels[$_] =~ /^([A-Z]+)([!<]+)$/)
                      {
                         $pscorelabels[$_] = $1;
-                        $pscoreflags      = $2 if ($1 eq 'score');
+                        $pscoreflags      = $2 if ($1 eq 'SCORE');
                      }
                   }
                }
+               elsif ($info[1] eq 'teamscores')
+               {
+                  $teamplay = 1;
+               }
+            }
+            when ( 'recordset' )
+            {
+               $$recordset{$info[1]} = $info[2];
             }
             when ( 'player' )
             {
@@ -387,28 +464,29 @@ my $xonstream = IO::Async::Socket->new(
                      $$pscores{$info[5]}{$pscorelabels[$i]} = $score[$i] if $pscorelabels[$i];
                   }
 
-                  $$pscores{$info[5]}{playtime} = $info[3];
-                  $$pscores{$info[5]}{name}     = qfont_decode($info[6]);
+                  $$pscores{$info[5]}{PTIME} = $info[3];
+                  $$pscores{$info[5]}{NAME}  = qfont_decode($info[6], 1);
                }
             }
             when ( 'end' )
             {
                return unless $pscores;
-               # TODO: Don't show scores of pure botmatches
 
                my @pkeys = keys(%$pscores);
 
-               my $heading = '>>> Scores';
-               $heading   .= " for $type on $map" if ($type && $map);
-               $heading   .= " / Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
+               my $heading = '>>> Scores ';
+               $heading   .= ($instagib ? 'for InstaGib ' : 'for ') . "$type ($$modes{$type}) on $map / " if ($type && $map);
+               $heading   .= " Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
+               $heading   .= ' <<<';
 
-               my $table = Text::ANSITable->new(use_box_chars => 0, use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle'); # show_row_separator => 1
-               my @cols  = grep { length } @pscorelabels;
+               # Default::csingle looks better but uses more chars
+               my $table = Text::ANSITable->new(use_box_chars => 0, use_utf8 => 1, wide => 0, use_color => 0, border_style => 'Default::singlei_utf8'); # show_row_separator => 1
+               my @cols  = grep { length && !/^FPS/ } @pscorelabels;
+               @cols     = grep { !/^TEAMKILLS/ } @cols unless $teamplay;
 
-               $table->columns(['NAME', (map { uc } @cols), 'TIME']);
-               $table->set_column_style($_ => type => 'num') for qw(ELO DMG DMGTAKEN FPS);
+               $table->columns(['NAME', @cols, 'PTIME']);
 
-               my @pkeys_sorted = sort {$$pscores{$b}{score} <=> $$pscores{$a}{score}} @pkeys;
+               my @pkeys_sorted = sort {$$pscores{$b}{SCORE} <=> $$pscores{$a}{SCORE}} @pkeys;
                @pkeys_sorted    = reverse(@pkeys_sorted) if ($pscoreflags =~ /</);
 
                for my $id (@pkeys_sorted)
@@ -416,25 +494,28 @@ my $xonstream = IO::Async::Socket->new(
                   my @row;
 
                   # Discords stupid font misaligns the table with wide chars
-                  $$pscores{$id}{name} =~ s/[^\x00-\xFF]/\*/g;
-                  $$pscores{$id}{name} =~ s/\s+/ /g;
+                  $$pscores{$id}{NAME} =~ s/[^\x00-\xFF]/\*/g;
+                  $$pscores{$id}{NAME} =~ s/\s+/ /g;
 
-                  push(@row, $$pscores{$id}{name}); # TODO: truncate_egc() ?
+                  push(@row, truncate_egc($$pscores{$id}{NAME}, 22));
 
                   for (@cols)
                   {
-                     #TODO: Use Text::ANSITable methods for formatting columns?
                      given ( $_ )
                      {
-                        when ( /dmg(?:taken)?/ )
+                        when ( 'BCTIME' )
                         {
-                           push(@row, sprintf('%.2f k', $$pscores{$id}{$_}/1000));
+                           push(@row, duration($$pscores{$id}{$_}, 1));
                         }
-                        when ( 'elo' )
+                        when ( /DMG(?:TAKEN)?/ )
+                        {
+                           push(@row, sprintf('%.2fk', $$pscores{$id}{$_}/1000));
+                        }
+                        when ( 'ELO' )
                         {
                            push(@row, $$pscores{$id}{$_} < 0 ? '-' : int($$pscores{$id}{$_}));
                         }
-                        when ( 'fps' )
+                        when ( 'FPS' )
                         {
                            push(@row, $$pscores{$id}{$_} == 0 ? '-' : $$pscores{$id}{$_})
                         }
@@ -445,31 +526,57 @@ my $xonstream = IO::Async::Socket->new(
                      }
                   }
 
-                  push(@row, duration($$pscores{$id}{playtime}));
+                  for (qw(ELO DMG DMGTAKEN FPS))
+                  {
+                     $table->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
+                  }
+
+                  push(@row, duration($$pscores{$id}{PTIME}, 1));
 
                   $table->add_row(\@row);
                }
 
                my $text = $table->draw;
 
-               $discord->send_message( $$config{discord}{linkchan}, "```\n$heading\n$text```" );
+               #$discord->send_message( $$config{discord}{linkchan}, "```\n$heading\n$text```" );
+               $discord->send_message( $$config{discord}{linkchan}, "`$heading`" );
+               $discord->send_message( $$config{discord}{linkchan}, "```\n$text```" );
 
                say localtime(time) . "\n$heading\n$text";
 
-               reset_players();
-               @lastplayers = @pkeys_sorted; # does not include spectators but meh
+               @lastplayers = @pkeys_sorted;
+            }
+            when ( 'ctf' )
+            {
+               if ($info[1] eq 'capture')
+               {
+                  $info[1] = $info[4];
+                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$recordset{$info[4]} ? sprintf(' in %.3f seconds!', $$recordset{$info[4]}) : '');
+                  delete $$recordset{$info[3]};
+               }
             }
             when ( 'vote' )
             {
-               if ($info[1] eq 'vcall')
+               given ( $info[1] )
                {
-                  $info[1] = $info[2];
-                  $msg = 'called a vote: ' . $info[3];
+                  when ( 'vcall' )
+                  {
+                     $info[1] = $info[2];
+                     $msg = 'called a vote: ' . $info[3];
+                  }
+                  when ( 'vyes' )
+                  {
+                     $discord->send_message( $$config{discord}{linkchan}, "`the vote was accepted`" );
+                  }
+                  when ( 'vno' )
+                  {
+                     $discord->send_message( $$config{discord}{linkchan}, "`the vote was denied`" );
+                  }
                }
             }
          }
 
-         if ($msg)
+         if (defined $msg)
          {
             return unless (exists $$players{$info[1]});
 
@@ -539,26 +646,25 @@ sub discord_on_message_create
 
          if ( $channel eq $$config{discord}{linkchan} )
          {
-
-            if ( $msg =~ /$$config{rcon_re}/i && $id == $$config{discord}{owner_id} )
+            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} )
             {
-               return unless $1;
+               return if $1;
+               return unless $2;
 
-               rcon($1);
+               rcon($2);
                $discord->send_message( $channel, '`sent`' );
-               say localtime(time) . " !! RCON used by: <$$author{'username'}> Command: $1" unless ($1 =~ /rcon_password /);
+               say localtime(time) . " !! RCON used by: <$$author{'username'}> Command: $1";
 
                return;
             }
 
             $msg =~ s/`//g;
             $msg =~ s/\^/\^\^/g;
-            $msg =~ s/\R/ /g;
             if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
             {
-               # sensible quotes ingame
-               $msg =~ s/\@$self->{'users'}->{$1}->{'username'}/ << / if ($1 == $self->{'id'});
+               $msg =~ s/(?:\R^)\@$self->{'users'}->{$1}->{'username'}/ >>> /m if ($1 == $self->{'id'});
             }
+            $msg =~ s/(?:\R|\s)+/ /g;
             $msg =~ s/<#(\d+)>/#$self->{'channelnames'}->{$1}/g; # channel
             $msg =~ s/<@&(\d+)>/\@$self->{'rolenames'}->{$1}/g; # role
             $msg =~ s/<a?(:.+:)\d+>/$1/g; # emoji
@@ -742,13 +848,15 @@ sub chall_recvd
 
 sub qfont_decode
 {
-   my $qstr = shift // '';
+   my $qstr  = shift // '';
+   my $ascii = shift || 0;
+
    my @chars;
 
    for (split('', $qstr)) {
       my $i = ord($_) - 0xE000;
       my $c = ($_ ge "\N{U+E000}" && $_ le "\N{U+E0FF}")
-      ? $qfont_unicode_glyphs[$i % @qfont_unicode_glyphs]
+      ? ($ascii ? $qfont_ascii_table[$i % @qfont_ascii_table] : $qfont_unicode_glyphs[$i % @qfont_unicode_glyphs])
       : $_;
       #printf "<$_:$c|ord:%d>", ord;
       push @chars, $c if defined $c;
@@ -769,15 +877,26 @@ sub stripcolors
 sub duration
 {
    my $sec = shift || return 0;
+   my $nos = shift;
 
    my @gmt = gmtime($sec);
 
    $gmt[5] -= 70;
 
-   return ($gmt[7] ?  $gmt[7]                                          .'d' : '').
-          ($gmt[2] ? ($gmt[7]                       ? ' ' : '').$gmt[2].'h' : '').
-          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ' ' : '').$gmt[1].'m' : '').
-          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ' ' : '').$gmt[0].'s' : '');
+   return ($gmt[7] ?  $gmt[7]                                                             .'d' : '').
+          ($gmt[2] ? ($gmt[7]                       ? ($nos ? '' : ' ') : '').$gmt[2].'h' : '').
+          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? '' : ' ') : '').$gmt[1].'m' : '').
+          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? '' : ' ') : '').$gmt[0].'s' : '');
+}
+
+sub score2time {
+   my $score = shift || return '-';
+
+   return 0 unless ($score =~ /^[0-9]+/);
+
+   my $sec = substr($score, 0, -2, '');
+
+   return $sec . '.' . $score . ' sec.';
 }
 
 sub discord_on_ready
