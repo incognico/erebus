@@ -21,9 +21,9 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
-# - fix LMS rank (pscoreflags primary/secondary)
+# - local log file/folder for scoretables, maybe folder/$matchid.txt
 # - split endmatch scoreboard before $discord_char_limit on newline
-# - $tscore* (team scoring) + sort scoreboard in teams with line sep or 1 msg per team
+# - sort player scoreboard in teams with line sep or 1 msg per team
 # - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
 #   - make use of IO::Async for this and get rid of @cmdqueue
@@ -261,8 +261,11 @@ discord_on_message_create();
 $discord->init();
 
 my ($recvbuf, @cmdqueue);
-my ($matchid, $map, $bots, $players, $type, $instagib, $maptime, @pscorelabels, $pscoreflags, $pscores, $teamplay, @lastplayers)
-=  ('',       '',   0,     {},       '',    0,         0,        (),            '',           {},       0,         (),         );
+
+my ($matchid, $map, $bots, $players, $type, $instagib, $maptime, $teamplay, @lastplayers)
+=  ('',       '',   0,     {},       '',    0,         0,        0,         (),         );
+my (@pscorelabels, $pscorekey, $pscoreorder, $pscores, @tscorelabels, $tscorekey, $tscoreorder, $tscores)
+=  ((),            'SCORE',    0,            {},        (),            'SCORE',    0,            {},    );
 
 my $xonstream = IO::Async::Socket->new(
    recv_len => 1400,
@@ -338,11 +341,11 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'chat_spec' )
             {
-               $msg = '(spectator) ' . $info[2];
+               $msg = '(SPECTATOR) ' . $info[2];
             }
             when ( 'chat_team' )
             {
-               next; # we don't show team chat
+               #next;
                $msg = "($$teams{$info[2]}) $info[3]";
             }
             when ( 'name' )
@@ -358,13 +361,17 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'gamestart' )
             {
-               ($bots, $players, @pscorelabels, $pscoreflags, $pscores, $teamplay) = (0, {}, (), '', {}, 0);
+               ($bots, $players, $teamplay)
+             = (0,     {},       0        );
+               (@pscorelabels, $pscorekey, $pscoreorder, $pscores, @tscorelabels, $tscorekey, $tscoreorder, $tscores)
+             = ((),            'SCORE',    0,            {},       (),            'SCORE',    0,            {}      );
 
                $matchid = $info[2];
 
-               if ($info[1] =~ /^([a-z]+)_(.+)$/) {
+               if ($info[1] =~ /^([a-z]+)_(.+)$/)
+               {
                   ($type, $map) = (uc($1), $2);
-                  $discord->status_update( { 'name' => "$type on $map", type => 0 } );
+                  $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } );
                }
             }
             when ( 'gameover' )
@@ -423,7 +430,7 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] =~ /^([a-z]+)_(.+)$/)
                {
                   ($type, $map) = (uc($1), $2);
-                  $discord->status_update( { 'name' => "$type on $map", type => 0 } );
+                  $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } );
                }
             }
             when ( 'labels' )
@@ -432,24 +439,57 @@ my $xonstream = IO::Async::Socket->new(
                {
                   @pscorelabels = map { uc } split(/,/, $info[2]);
 
-                  # map(s/^(.+?)[!<]+$/$1/, @titles);
                   for (0..$#pscorelabels)
                   {
                      if ($pscorelabels[$_] =~ /^([A-Z]+)([!<]+)$/)
                      {
-                        $pscorelabels[$_] = $1;
-                        $pscoreflags      = $2 if ($1 eq 'SCORE');
+                        my $label = $1;
+                        my $flags = $2;
+
+                        $pscorelabels[$_] = $label;
+
+                        if ($flags =~ /!!/)
+                        {
+                           $pscorekey   = $label;
+                           $pscoreorder = 1 if ($flags =~ /</);
+                        }
                      }
                   }
                }
                elsif ($info[1] eq 'teamscores')
                {
                   $teamplay = 1;
+
+                  @tscorelabels = map { uc } split(/,/, $info[2], 2);
+
+                  for (0..$#tscorelabels)
+                  {
+                     if ($tscorelabels[$_] =~ /^([A-Z]+)([!<]+)$/)
+                     {
+                        my $label = $1;
+                        my $flags = $2;
+
+                        $tscorelabels[$_] = $label;
+
+                        if ($flags =~ /!!/)
+                        {
+                           $tscorekey   = $label;
+                           $tscoreorder = 1 if ($flags =~ /</);
+                        }
+                     }
+                  }
                }
             }
             when ( 'recordset' )
             {
-               $$players{$info[1]}{recordset} = $info[2];
+               if ($type && $type eq 'CTS') 
+               {
+                  $msg = ':checkered_flag: set a record: ' . sprintf(' %.4f seconds!', $info[2]);
+               }
+               else
+               {
+                  $$players{$info[1]}{recordset} = $info[2];
+               }
             }
             when ( 'player' )
             {
@@ -461,11 +501,26 @@ my $xonstream = IO::Async::Socket->new(
 
                   for my $i (0..$#score)
                   {
-                     $$pscores{$info[5]}{$pscorelabels[$i]} = $score[$i] if $pscorelabels[$i];
+                     if ($pscorelabels[$i])
+                     {
+                        $$pscores{$info[5]}{$pscorelabels[$i]} = $pscorelabels[$i] eq 'FASTEST' ? $score[$i]*-1 : $score[$i];
+                     }
                   }
 
                   $$pscores{$info[5]}{PTIME} = $info[3];
                   $$pscores{$info[5]}{NAME}  = qfont_decode($info[6], 1);
+               }
+            }
+            when ( 'teamscores' )
+            {
+               if ($info[1] eq 'see-labels')
+               {
+                  my @tscore = split(/,/, $info[2], 2);
+
+                  for my $i (0..$#tscore)
+                  {
+                     $$tscores{$info[3]}{$tscorelabels[$i]} = $tscore[$i] if $tscorelabels[$i];
+                  }
                }
             }
             when ( 'end' )
@@ -475,29 +530,50 @@ my $xonstream = IO::Async::Socket->new(
                my @pkeys = keys(%$pscores);
 
                my $heading = '>>> Scores ';
-               $heading   .= ($instagib ? 'for InstaGib ' : 'for ') . "$type ($$modes{$type}) on $map / " if ($type && $map);
-               $heading   .= " Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
+               $heading   .= ('for ' . ($instagib ? 'InstaGib ' : '') . "$type ($$modes{$type}) on $map / ") if ($type && $map);
+               $heading   .= "Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
                $heading   .= ' <<<';
 
-               # Default::csingle looks better but uses more chars
-               my $table = Text::ANSITable->new(use_box_chars => 0, use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8'); # show_row_separator => 1
+               my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8', cell_pad => 0);
                my @cols  = grep { length && !/^FPS/ } @pscorelabels;
-               @cols     = grep { !/^TEAMKILLS/ } @cols unless $teamplay;
+               @cols     = grep { !/^TEAMKILLS/ }     @cols unless $teamplay;
 
-               $table->columns(['NAME', @cols, 'PTIME']);
+               $t->columns(['NAME', @cols, 'PTIME']);
 
-               my @pkeys_sorted = sort {$$pscores{$b}{SCORE} <=> $$pscores{$a}{SCORE}} @pkeys;
-               @pkeys_sorted    = reverse(@pkeys_sorted) if ($pscoreflags =~ /</);
+               my @pkeys_sorted = sort {$$pscores{$b}{$pscorekey} <=> $$pscores{$a}{$pscorekey}} @pkeys;
+               @pkeys_sorted    = reverse(@pkeys_sorted) if $pscoreorder;
+
+               my $tt;
+               if ($teamplay)
+               {
+                  my @tkeys = keys(%$tscores);
+
+                  $tt = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8');
+                  my @tcols  = grep { length } reverse @tscorelabels;
+
+                  $tt->columns(['TEAM', @tcols]);
+
+                  my @tkeys_sorted = sort {$$tscores{$b}{$tscorekey} <=> $$tscores{$a}{$tscorekey}} @tkeys;
+                  @tkeys_sorted    = reverse(@tkeys_sorted) if $tscoreorder;
+
+                  for my $id (@tkeys_sorted)
+                  {
+                     my @row;
+
+                     push(@row, $$teams{$id});
+                     push(@row, $$tscores{$id}{$_}) for (@tcols);
+
+                     $tt->add_row(\@row);
+                  }
+               }
 
                for my $id (@pkeys_sorted)
                {
                   my @row;
 
-                  # Discords stupid font misaligns the table with wide chars
-                  $$pscores{$id}{NAME} =~ s/[^\x00-\xFF]/\*/g;
-                  $$pscores{$id}{NAME} =~ s/\s+/ /g;
+                  $$pscores{$id}{NAME} =~ s/[^\x00-\xFF]|\s+//g;
 
-                  push(@row, truncate_egc($$pscores{$id}{NAME}, 22));
+                  push(@row, truncate_egc($$pscores{$id}{NAME}, 18, '~'));
 
                   for (@cols)
                   {
@@ -507,7 +583,11 @@ my $xonstream = IO::Async::Socket->new(
                         {
                            push(@row, duration($$pscores{$id}{$_}, 1));
                         }
-                        when ( /DMG(?:TAKEN)?/ )
+                        when ( /^(?:CAPTIME|FASTEST)$/ )
+                        {
+                            push(@row, $$pscores{$id}{$_} ? sprintf('%.2fs', abs($$pscores{$id}{$_}/100)) : '-');
+                        }
+                        when ( /^DMG(?:TAKEN)?$/ )
                         {
                            push(@row, sprintf('%.2fk', $$pscores{$id}{$_}/1000));
                         }
@@ -517,7 +597,7 @@ my $xonstream = IO::Async::Socket->new(
                         }
                         when ( 'FPS' )
                         {
-                           push(@row, $$pscores{$id}{$_} == 0 ? '-' : $$pscores{$id}{$_})
+                           push(@row, $$pscores{$id}{$_} ? $$pscores{$id}{$_} : '-');
                         }
                         default
                         {
@@ -526,23 +606,47 @@ my $xonstream = IO::Async::Socket->new(
                      }
                   }
 
-                  for (qw(ELO DMG DMGTAKEN FPS))
+                  for (qw(BCTIME CAPTIME ELO DMG DMGTAKEN FASTEST FPS))
                   {
-                     $table->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
+                     $t->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
                   }
 
                   push(@row, duration($$pscores{$id}{PTIME}, 1));
 
-                  $table->add_row(\@row);
+                  $t->add_row(\@row);
                }
 
-               my $text = $table->draw;
+               my $shortnames = {
+                  'TEAMKILLS' => 'TK',
+                  'FCKILLS'   => 'FCK',
+                  'DMG'       => 'DMG+',
+                  'DMGTAKEN'  => 'DMG-',
+                  'SUICIDES'  => 'SK',
+                  'REVIVALS'  => 'REVS',
+               };
 
-               #$discord->send_message( $$config{discord}{linkchan}, "```\n$heading\n$text```" );
-               $discord->send_message( $$config{discord}{linkchan}, "`$heading`" );
-               $discord->send_message( $$config{discord}{linkchan}, "```\n$text```" );
+               # TODO: Find out a way to make this work possibly at the very end
+               #my @newnames;
+               #push(@newnames, exists $$shortnames{$_} ? $$shortnames{$_} : $_) for ($t->columns);
+               #$t->columns(\@newnames);
 
-               say localtime(time) . "\n$heading\n$text";
+               $discord->send_message( $$config{discord}{linkchan}, ":video_game: `$heading`" );
+               say localtime(time) . "\n" . $heading;
+
+               if ($teamplay)
+               {
+                  my $tt_text = $tt->draw;
+                  $tt_text =~ s/(?:^\s|\s$)//gm;
+
+                  $discord->send_message( $$config{discord}{linkchan}, "```\n$tt_text```" );
+                  say localtime(time) . "\n" . $tt_text;
+               }
+
+               my $t_text = $t->draw;
+               $t_text =~ s/(?:^\s|\s$)//gm;
+
+               $discord->send_message( $$config{discord}{linkchan}, "```\n$t_text```" );
+               say localtime(time) . "\n$t_text";
 
                @lastplayers = @pkeys_sorted;
             }
@@ -551,7 +655,9 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] eq 'capture')
                {
                   $info[1] = $info[4];
-                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$players{$info[4]}{recordset} ? sprintf(' in %.3f seconds!', $$players{$info[4]}{recordset} : '');
+
+                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$players{$info[4]}{recordset} ? sprintf(' in a record %.4f seconds!', $$players{$info[4]}{recordset}) : '');
+
                   delete $$players{$info[4]}{recordset};
                }
             }
@@ -562,15 +668,16 @@ my $xonstream = IO::Async::Socket->new(
                   when ( 'vcall' )
                   {
                      $info[1] = $info[2];
-                     $msg = 'called a vote: ' . $info[3];
+
+                     $msg = ':ballot_box: called a vote: ' . $info[3];
                   }
                   when ( 'vyes' )
                   {
-                     $discord->send_message( $$config{discord}{linkchan}, "`the vote was accepted`" );
+                     $discord->send_message( $$config{discord}{linkchan}, ':white_check_mark: `the vote was accepted`' );
                   }
                   when ( 'vno' )
                   {
-                     $discord->send_message( $$config{discord}{linkchan}, "`the vote was denied`" );
+                     $discord->send_message( $$config{discord}{linkchan}, ':x: `the vote was denied`' );
                   }
                }
             }
@@ -630,11 +737,11 @@ sub discord_on_message_create
    {
       my ($gw, $hash) = @_;
 
-      my $id = $hash->{'author'}->{'id'};
-      my $author = $hash->{'author'};
-      my $msg = $hash->{'content'};
-      my $msgid = $hash->{'id'};
-      my $channel = $hash->{'channel_id'};
+      my $id       = $hash->{'author'}->{'id'};
+      my $author   = $hash->{'author'};
+      my $msg      = $hash->{'content'};
+      my $msgid    = $hash->{'id'};
+      my $channel  = $hash->{'channel_id'};
       my @mentions = @{$hash->{'mentions'}};
 
       add_user($_) for(@mentions);
@@ -662,7 +769,7 @@ sub discord_on_message_create
             $msg =~ s/\^/\^\^/g;
             if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
             {
-               $msg =~ s/(?:\R^)\@$self->{'users'}->{$1}->{'username'}/ >>> /m if ($1 == $self->{'id'});
+               $msg =~ s/(?:\R^)\@$self->{'users'}->{$1}->{'username'}/ >>> /m if ($1 == $self->{'id'}); # quote
             }
             $msg =~ s/(?:\R|\s)+/ /g;
             $msg =~ s/<#(\d+)>/#$self->{'channelnames'}->{$1}/g; # channel
@@ -684,7 +791,7 @@ sub discord_on_message_create
          {
             unless ($map && $type)
             {
-               $discord->send_message( $channel, '`No idea yet, ask me later :D`' );
+               $discord->send_message( $channel, '`No idea yet, I just woke up. Ask me later :D`' );
             }
             else
             {
@@ -853,12 +960,12 @@ sub qfont_decode
 
    my @chars;
 
-   for (split('', $qstr)) {
+   for (split('', $qstr))
+   {
       my $i = ord($_) - 0xE000;
       my $c = ($_ ge "\N{U+E000}" && $_ le "\N{U+E0FF}")
       ? ($ascii ? $qfont_ascii_table[$i % @qfont_ascii_table] : $qfont_unicode_glyphs[$i % @qfont_unicode_glyphs])
       : $_;
-      #printf "<$_:$c|ord:%d>", ord;
       push @chars, $c if defined $c;
    }
 
@@ -883,20 +990,10 @@ sub duration
 
    $gmt[5] -= 70;
 
-   return ($gmt[7] ?  $gmt[7]                                                             .'d' : '').
+   return ($gmt[7] ?  $gmt[7]                                                        .'d' : '').
           ($gmt[2] ? ($gmt[7]                       ? ($nos ? '' : ' ') : '').$gmt[2].'h' : '').
           ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? '' : ' ') : '').$gmt[1].'m' : '').
           ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? '' : ' ') : '').$gmt[0].'s' : '');
-}
-
-sub score2time {
-   my $score = shift || return '-';
-
-   return 0 unless ($score =~ /^[0-9]+/);
-
-   my $sec = substr($score, 0, -2, '');
-
-   return $sec . '.' . $score . ' sec.';
 }
 
 sub discord_on_ready
