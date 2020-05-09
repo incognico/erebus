@@ -141,6 +141,17 @@ my $modes = {
    'VIP'       => 'Very Important Player',
 };
 
+my $shortnames = {
+   'BCKILLS'   => 'BCK',
+   'DMG'       => 'DMG+',
+   'DMGTAKEN'  => 'DMG-',
+   'FCKILLS'   => 'FCK',
+   'PICKUPS'   => 'PCKPS',
+   'REVIVALS'  => 'REVS',
+   'SUICIDES'  => 'SK',
+   'TEAMKILLS' => 'TK',
+};
+
 my $discord_char_limit = 2000;
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
@@ -352,12 +363,9 @@ my $xonstream = IO::Async::Socket->new(
             {
                $$players{$info[1]}{name} = $info[2];
             }
-            when ( 'gameinfo' )
+            when ( 'team' )
             {
-               if ($info[1] eq 'mutators' && $info[2] eq 'LIST')
-               {
-                  $instagib = 'instagib' ~~ @info[3..$#info] ? 1 : 0;
-               }
+               $$players{$info[1]}{team} = $info[2];
             }
             when ( 'gamestart' )
             {
@@ -374,9 +382,12 @@ my $xonstream = IO::Async::Socket->new(
                   $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } );
                }
             }
-            when ( 'gameover' )
+            when ( 'gameinfo' )
             {
-               $matchid  = 'intermission';
+               if ($info[1] eq 'mutators' && $info[2] eq 'LIST')
+               {
+                  $instagib = 'instagib' ~~ @info[3..$#info] ? 1 : 0;
+               }
             }
             when ( 'startdelay_ended' )
             {
@@ -419,9 +430,47 @@ my $xonstream = IO::Async::Socket->new(
                   $discord->send_message( $$config{discord}{linkchan}, $message );
                }
             }
-            when ( 'team' )
+            when ( 'recordset' )
             {
-               $$players{$info[1]}{team} = $info[2];
+               if ($type && $type eq 'CTS') 
+               {
+                  $msg = ':checkered_flag: set a record: ' . sprintf(' %.4f seconds!', $info[2]);
+               }
+               else
+               {
+                  $$players{$info[1]}{recordset} = $info[2];
+               }
+            }
+            when ( 'ctf' )
+            {
+               if ($info[1] eq 'capture')
+               {
+                  $info[1] = $info[4];
+
+                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$players{$info[4]}{recordset} ? sprintf(' in a record %.4f seconds!', $$players{$info[4]}{recordset}) : '');
+
+                  delete $$players{$info[4]}{recordset};
+               }
+            }
+            when ( 'vote' )
+            {
+               given ( $info[1] )
+               {
+                  when ( 'vcall' )
+                  {
+                     $info[1] = $info[2];
+
+                     $msg = ':ballot_box: called a vote: ' . $info[3];
+                  }
+                  when ( 'vyes' )
+                  {
+                     $discord->send_message( $$config{discord}{linkchan}, ':white_check_mark: `the vote was accepted`' );
+                  }
+                  when ( 'vno' )
+                  {
+                     $discord->send_message( $$config{discord}{linkchan}, ':x: `the vote was denied`' );
+                  }
+               }
             }
             when ( 'scores' )
             {
@@ -441,16 +490,16 @@ my $xonstream = IO::Async::Socket->new(
 
                   for (0..$#pscorelabels)
                   {
-                     if ($pscorelabels[$_] =~ /^([A-Z]+)([!<]+)$/)
+                     if ($pscorelabels[$_] =~ /^([A-Z]+)([!<]+)?$/)
                      {
-                        my $label = $1;
+                        my $label = defined $$shortnames{$1} ? $$shortnames{$1} : $1;
                         my $flags = $2;
 
                         $pscorelabels[$_] = $label;
 
-                        if ($flags =~ /!!/)
+                        if ($flags && $flags =~ /!!/)
                         {
-                           $pscorekey   = $label;
+                           $pscorekey   = defined $$shortnames{$label} ? $$shortnames{$label} : $label;
                            $pscoreorder = 1 if ($flags =~ /</);
                         }
                      }
@@ -464,7 +513,7 @@ my $xonstream = IO::Async::Socket->new(
 
                   for (0..$#tscorelabels)
                   {
-                     if ($tscorelabels[$_] =~ /^([A-Z]+)([!<]+)$/)
+                     if ($tscorelabels[$_] =~ /^([A-Z]+)([!<]+)?$/)
                      {
                         my $label = $1;
                         my $flags = $2;
@@ -478,17 +527,6 @@ my $xonstream = IO::Async::Socket->new(
                         }
                      }
                   }
-               }
-            }
-            when ( 'recordset' )
-            {
-               if ($type && $type eq 'CTS') 
-               {
-                  $msg = ':checkered_flag: set a record: ' . sprintf(' %.4f seconds!', $info[2]);
-               }
-               else
-               {
-                  $$players{$info[1]}{recordset} = $info[2];
                }
             }
             when ( 'player' )
@@ -535,8 +573,8 @@ my $xonstream = IO::Async::Socket->new(
                $heading   .= ' <<<';
 
                my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8', cell_pad => 0);
-               my @cols  = grep { length && !/^FPS/ } @pscorelabels;
-               @cols     = grep { !/^TEAMKILLS/ }     @cols unless $teamplay;
+               my @cols  = grep { length && !/^FPS$/ } @pscorelabels;
+               @cols     = grep { !/^TEAMKILLS|TK$/ }  @cols unless $teamplay;
 
                $t->columns(['NAME', @cols, 'PTIME']);
 
@@ -587,7 +625,7 @@ my $xonstream = IO::Async::Socket->new(
                         {
                             push(@row, $$pscores{$id}{$_} ? sprintf('%.2fs', abs($$pscores{$id}{$_}/100)) : '-');
                         }
-                        when ( /^DMG(?:TAKEN)?$/ )
+                        when ( /^DMG(?:[+-]|TAKEN)?$/ )
                         {
                            push(@row, sprintf('%.2fk', $$pscores{$id}{$_}/1000));
                         }
@@ -606,7 +644,7 @@ my $xonstream = IO::Async::Socket->new(
                      }
                   }
 
-                  for (qw(BCTIME CAPTIME ELO DMG DMGTAKEN FASTEST FPS))
+                  for (qw(BCTIME CAPTIME ELO DMG DMGTAKEN DMG+ DMG- FASTEST FPS))
                   {
                      $t->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
                   }
@@ -615,20 +653,6 @@ my $xonstream = IO::Async::Socket->new(
 
                   $t->add_row(\@row);
                }
-
-               my $shortnames = {
-                  'TEAMKILLS' => 'TK',
-                  'FCKILLS'   => 'FCK',
-                  'DMG'       => 'DMG+',
-                  'DMGTAKEN'  => 'DMG-',
-                  'SUICIDES'  => 'SK',
-                  'REVIVALS'  => 'REVS',
-               };
-
-               # TODO: Find out a way to make this work possibly at the very end
-               #my @newnames;
-               #push(@newnames, exists $$shortnames{$_} ? $$shortnames{$_} : $_) for ($t->columns);
-               #$t->columns(\@newnames);
 
                $discord->send_message( $$config{discord}{linkchan}, ":video_game: `$heading`" );
                say localtime(time) . "\n" . $heading;
@@ -650,36 +674,9 @@ my $xonstream = IO::Async::Socket->new(
 
                @lastplayers = @pkeys_sorted;
             }
-            when ( 'ctf' )
+            when ( 'gameover' )
             {
-               if ($info[1] eq 'capture')
-               {
-                  $info[1] = $info[4];
-
-                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$players{$info[4]}{recordset} ? sprintf(' in a record %.4f seconds!', $$players{$info[4]}{recordset}) : '');
-
-                  delete $$players{$info[4]}{recordset};
-               }
-            }
-            when ( 'vote' )
-            {
-               given ( $info[1] )
-               {
-                  when ( 'vcall' )
-                  {
-                     $info[1] = $info[2];
-
-                     $msg = ':ballot_box: called a vote: ' . $info[3];
-                  }
-                  when ( 'vyes' )
-                  {
-                     $discord->send_message( $$config{discord}{linkchan}, ':white_check_mark: `the vote was accepted`' );
-                  }
-                  when ( 'vno' )
-                  {
-                     $discord->send_message( $$config{discord}{linkchan}, ':x: `the vote was denied`' );
-                  }
-               }
+               $matchid  = 'intermission';
             }
          }
 
