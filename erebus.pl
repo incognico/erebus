@@ -21,7 +21,6 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
-# - local log file/folder for scoretables, maybe folder/$matchid.txt
 # - split endmatch scoreboard before $discord_char_limit on newline
 # - sort player scoreboard in teams with line sep or 1 msg per team
 # - use Text::ANSITable methods for formatting columns?
@@ -33,7 +32,7 @@
 #     and possibly fall back to method 1 if $challange_timeout is exceeded
 #   - for now it is fine as Xonotic defaults to rcon_secure 1 anyways
 
-use v5.16.0;
+use v5.28.0;
 
 use utf8;
 use strict;
@@ -41,7 +40,8 @@ use warnings;
 
 use lib '/etc/perl';
 
-no warnings 'experimental::smartmatch';
+use feature 'signatures';
+no warnings qw(experimental::signatures experimental::smartmatch);
 
 binmode( STDOUT, ":encoding(UTF-8)" );
 
@@ -49,6 +49,7 @@ binmode( STDOUT, ":encoding(UTF-8)" );
 use Mojo::Discord;
 use IO::Async::Loop::Mojo;
 use IO::Async::Socket;
+use IO::File;
 use Digest::HMAC;
 use Digest::MD4;
 use MaxMind::DB::Reader;
@@ -71,6 +72,7 @@ my $config = {
    smbmod => 1,                            # Set to 1 if server uses SMB modpack, otherwise you should set sv_adminnick "^8DISCORD^3" in server.cfg
    pass   => '',                           # rcon_password in server.cfg
    geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
+   logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
 
    discord => {
@@ -86,6 +88,8 @@ my $config = {
    xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
    rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 };
+# You can also experiemnt with different table border styles and paddings, Default::csingle with default (1) cell_pad looks nice but uses lots of space and chars
+# As soon as it warps it looks off in discord. To get as tight as possible use Default::singlei_utf8, cell_pad 0 and extend the $shortnames hash even more.
 
 my $discord = Mojo::Discord->new(
    'version'   => 9999,
@@ -94,7 +98,7 @@ my $discord = Mojo::Discord->new(
    'name'      => 'Erebus',
    'reconnect' => 1,
    'verbose'   => 0,
-   'logdir'    => "$ENV{HOME}/.xonotic",
+   'logdir'    => "$ENV{HOME}/.xonotic/erebus",
    'logfile'   => 'discord.log',
    'loglevel'  => 'info',
 );
@@ -146,7 +150,7 @@ my $shortnames = {
    'DMG'       => 'DMG+',
    'DMGTAKEN'  => 'DMG-',
    'FCKILLS'   => 'FCK',
-   'PICKUPS'   => 'PCKPS',
+   'PICKUPS'   => 'PCKUPS',
    'REVIVALS'  => 'REVS',
    'SUICIDES'  => 'SK',
    'TEAMKILLS' => 'TK',
@@ -281,9 +285,8 @@ my (@pscorelabels, $pscorekey, $pscoreorder, $pscores, @tscorelabels, $tscorekey
 my $xonstream = IO::Async::Socket->new(
    recv_len => 1400,
 
-   on_recv => sub {
-      my ( $self, $dgram, $addr ) = @_;
-
+   on_recv => sub ($self, $dgram, $addr)
+   {
       chall_recvd($1) if ($dgram =~ /^${qheader}challenge (.*?)(\0|$)/);
 
       ($recvbuf .= $dgram) =~ s/${qheader}n?//g;
@@ -420,7 +423,7 @@ my $xonstream = IO::Async::Socket->new(
                       ],
                   };
 
-                  #push @{$$embed{'fields'}}, { 'name' => 'Bots', 'value' => $bots, 'inline' => \1, } if ($bots);
+                  #push $$embed{'fields'}->@*, { 'name' => 'Bots', 'value' => $bots, 'inline' => \1, } if ($bots);
 
                   my $message = {
                      'content' => '',
@@ -572,7 +575,7 @@ my $xonstream = IO::Async::Socket->new(
                $heading   .= "Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
                $heading   .= ' <<<';
 
-               my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8', cell_pad => 0);
+               my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle');
                my @cols  = grep { length && !/^FPS$/ } @pscorelabels;
                @cols     = grep { !/^TEAMKILLS|TK$/ }  @cols unless $teamplay;
 
@@ -586,7 +589,7 @@ my $xonstream = IO::Async::Socket->new(
                {
                   my @tkeys = keys(%$tscores);
 
-                  $tt = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8');
+                  $tt = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle');
                   my @tcols  = grep { length } reverse @tscorelabels;
 
                   $tt->columns(['TEAM', @tcols]);
@@ -657,9 +660,10 @@ my $xonstream = IO::Async::Socket->new(
                $discord->send_message( $$config{discord}{linkchan}, ":video_game: `$heading`" );
                say localtime(time) . "\n" . $heading;
 
+               my $tt_text;
                if ($teamplay)
                {
-                  my $tt_text = $tt->draw;
+                  $tt_text = $tt->draw;
                   $tt_text =~ s/(?:^\s|\s$)//gm;
 
                   $discord->send_message( $$config{discord}{linkchan}, "```\n$tt_text```" );
@@ -671,6 +675,19 @@ my $xonstream = IO::Async::Socket->new(
 
                $discord->send_message( $$config{discord}{linkchan}, "```\n$t_text```" );
                say localtime(time) . "\n$t_text";
+
+               my $of;
+               my $filename = "$$config{logdir}/$matchid.txt";
+               if ($$config{logdir} && $matchid && ($of = IO::File->new($filename, '>>:encoding(UTF-8)')))
+               {
+                  $of->print($heading . "\n");
+                  $of->print($tt_text . "\n") if ($teamplay);
+                  $of->print($t_text  . "\n");
+
+                  undef $of;
+
+                  say localtime(time) . " ** Scoretables written to $filename";
+               }
 
                @lastplayers = @pkeys_sorted;
             }
@@ -728,18 +745,16 @@ exit;
 
 ###
 
-sub discord_on_message_create
+sub discord_on_message_create ()
 {
-   $discord->gw->on('MESSAGE_CREATE' => sub
+   $discord->gw->on('MESSAGE_CREATE' => sub ($gw, $hash)
    {
-      my ($gw, $hash) = @_;
-
       my $id       = $hash->{'author'}->{'id'};
       my $author   = $hash->{'author'};
       my $msg      = $hash->{'content'};
       my $msgid    = $hash->{'id'};
       my $channel  = $hash->{'channel_id'};
-      my @mentions = @{$hash->{'mentions'}};
+      my @mentions = $hash->{'mentions'}->@*;
 
       add_user($_) for(@mentions);
 
@@ -757,7 +772,7 @@ sub discord_on_message_create
 
                rcon($2);
                $discord->send_message( $channel, '`sent`' );
-               say localtime(time) . " !! RCON used by: <$$author{'username'}> Command: $1";
+               say localtime(time) . " !! RCON used by: <$$author{'username'}> Command: $2";
 
                return;
             }
@@ -780,7 +795,7 @@ sub discord_on_message_create
 
             xonmsg($$author{'username'}, $msg);
          }
-         elsif ( $channel ~~ @{$$config{discord}{nocmdchans}} )
+         elsif ( $channel ~~ $$config{discord}{nocmdchans}->@* )
          {
             return;
          }
@@ -881,15 +896,15 @@ sub discord_on_message_create
                  ],
             };
 
-            push @{$$embed{'fields'}}, { 'name' => 'CTF Cap Ratio', 'value' => sprintf('%.2f', $capr), 'inline' => \1, } if $capr;
+            push $$embed{'fields'}->@*, { 'name' => 'CTF Cap Ratio', 'value' => sprintf('%.2f', $capr), 'inline' => \1, } if $capr;
 
             if ($elo && $elo != 100)
             {
-               push @{$$embed{'fields'}}, { 'name' => uc($elot) . ' ELO',   'value' => sprintf('%.2f', $elo),  'inline' => \1, };
-               push @{$$embed{'fields'}}, { 'name' => uc($elot) . ' Games', 'value' => $elog,                  'inline' => \1, };
+               push $$embed{'fields'}->@*, { 'name' => uc($elot) . ' ELO',   'value' => sprintf('%.2f', $elo),  'inline' => \1, };
+               push $$embed{'fields'}->@*, { 'name' => uc($elot) . ' Games', 'value' => $elog,                  'inline' => \1, };
             }
 
-            push @{$$embed{'fields'}}, { 'name' => 'Favourite Map', 'value' => sprintf('%s (%s)', $favmap, uc($favmapt)), 'inline' => \1, };
+            push $$embed{'fields'}->@*, { 'name' => 'Favourite Map', 'value' => sprintf('%s (%s)', $favmap, uc($favmapt)), 'inline' => \1, };
 
             my $message = {
                'content' => '',
@@ -904,19 +919,16 @@ sub discord_on_message_create
    return;
 }
 
-sub xonmsg
+sub xonmsg ($usr, $msg)
 {
-   my $usr = shift || return;
-   my $msg = shift // return;
-
    rcon($$config{smbmod} ? "ircmsg ^3(^8DISCORD^3) ^7$usr^3: ^7$msg" : "msg ^7$usr^3: ^7$msg");
 
    return;
 }
 
-sub rcon
+sub rcon ($line)
 {
-   my $line = encode_utf8(shift) || return;
+   encode_utf8($line);
 
    if ($$config{secure} == 2)
    {
@@ -938,10 +950,8 @@ sub rcon
    return;
 }
 
-sub chall_recvd
+sub chall_recvd ($c)
 {
-   my $c = shift || return;
-
    my $line = shift(@cmdqueue);
    my $d = Digest::HMAC::hmac("$c $line", $$config{pass}, \&Digest::MD4::md4);
  
@@ -950,11 +960,8 @@ sub chall_recvd
    return;
 }
 
-sub qfont_decode
+sub qfont_decode ($qstr, $ascii = 0)
 {
-   my $qstr  = shift // '';
-   my $ascii = shift || 0;
-
    my @chars;
 
    for (split('', $qstr))
@@ -969,19 +976,16 @@ sub qfont_decode
    return join '', @chars;
 }
 
-sub stripcolors
+sub stripcolors ($str)
 {
-   my $str = shift // '';
-
    $str =~ s/\^(\d|x[\dA-Fa-f]{3})//g;
 
    return $str;
 }
 
-sub duration
+sub duration ($sec, $nos = 0)
 {
-   my $sec = shift || return 0;
-   my $nos = shift;
+   return '-' unless $sec;
 
    my @gmt = gmtime($sec);
 
@@ -993,11 +997,10 @@ sub duration
           ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? '' : ' ') : '').$gmt[0].'s' : '');
 }
 
-sub discord_on_ready
+sub discord_on_ready ()
 {
-   $discord->gw->on('READY' => sub
+   $discord->gw->on('READY' => sub ($gw, $hash)
    {
-      my ($gw, $hash) = @_;
       add_me($hash->{'user'});
       $discord->status_update( { 'name' => $$config{'game'}, type => 0 } ) if ( $$config{'game'} );
    });
@@ -1005,37 +1008,32 @@ sub discord_on_ready
    return;
 }
 
-sub add_me
+sub add_me ($user)
 {
-   my ($user) = @_;
    $self->{'id'} = $user->{'id'};
    add_user($user);
 
    return;
 }
 
-sub add_user
+sub add_user ($user)
 {
-   my ($user) = @_;
-   my $id = $user->{'id'};
-   $self->{'users'}{$id} = $user;
+   $self->{'users'}{$user->{'id'}} = $user;
 
    return;
 }
 
-sub add_guild
+sub add_guild ($guild)
 {
-   my ($guild) = @_;
-
    $self->{'guilds'}{$guild->{'id'}} = $guild;
 
-   foreach my $channel (@{$guild->{'channels'}})
+   foreach my $channel ($guild->{'channels'}->@*)
    {
       $self->{'channels'}{$channel->{'id'}} = $guild->{'id'};
       $self->{'channelnames'}{$channel->{'id'}} = $channel->{'name'}
    }
 
-   foreach my $role (@{$guild->{'roles'}})
+   foreach my $role ($guild->{'roles'}->@*)
    {
       $self->{'rolenames'}{$role->{'id'}} = $role->{'name'};
    }
