@@ -751,6 +751,7 @@ sub discord_on_message_create ()
    {
       my $id       = $hash->{'author'}->{'id'};
       my $author   = $hash->{'author'};
+      my $member   = $hash->{'member'};
       my $msg      = $hash->{'content'};
       my $msgid    = $hash->{'id'};
       my $channel  = $hash->{'channel_id'};
@@ -791,9 +792,13 @@ sub discord_on_message_create ()
 
             return unless $msg;
 
-            say localtime(time) . " <- <$$author{'username'}> $msg";
+            my $nick = defined $$member{'nick'} ? $$member{'nick'} : $$author{'username'};
+            $nick =~ s/\^/\^\^/g;
+            $nick = stripcolors($nick);
 
-            xonmsg($$author{'username'}, $msg);
+            say localtime(time) . " <- <$nick> $msg";
+
+            xonmsg($nick, $msg);
          }
          elsif ( $channel ~~ $$config{discord}{nocmdchans}->@* )
          {
