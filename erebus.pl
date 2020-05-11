@@ -104,13 +104,31 @@ my $discord = Mojo::Discord->new(
 );
 
 my $teams = {
-       -1 => 'NONE',
-        1 => 'NONE',
-        5 => 'RED',
-       10 => 'PINK',
-       13 => 'YELLOW',
-       14 => 'BLUE',
-spectator => 'SPECTATOR',
+   -1 => {
+      color => 'NONE',
+   },
+   1 => {
+      color => 'NONE',
+   },
+   5 => {
+      color => 'RED',
+      id    => 1,
+   },
+   10 => {
+      color => 'PINK',
+      id => 4,
+   },
+   13 => {
+      color => 'YELLOW',
+      id => 3,
+   },
+   14 => {
+      color => 'BLUE',
+      id => 2,
+   },
+   spectator => {
+      color => 'SPECTATOR',
+   },
 };
 
 my $modes = {
@@ -278,7 +296,7 @@ $discord->init();
 my ($recvbuf, @cmdqueue);
 
 my ($matchid, $map, $bots, $players, $type, $instagib, $maptime, $teamplay, @lastplayers)
-=  ('',       '',   0,     {},       '',    0,         0,        0,         (),         );
+=  ('none',   '',   0,     {},       '',    0,         0,        0,         (),         );
 my (@pscorelabels, $pscorekey, $pscoreorder, $pscores, @tscorelabels, $tscorekey, $tscoreorder, $tscores)
 =  ((),            'SCORE',    0,            {},        (),            'SCORE',    0,            {},    );
 
@@ -337,7 +355,7 @@ my $xonstream = IO::Async::Socket->new(
             {
                $delaydelete = $info[1];
 
-               if (exists $$players{$info[1]})
+               if (defined $$players{$info[1]})
                {
                   unless ($$players{$info[1]}{ip} eq 'bot')
                   {
@@ -360,7 +378,7 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'chat_team' )
             {
                #next;
-               $msg = "($$teams{$info[2]}) $info[3]";
+               $msg = "($$teams{$info[2]}{color}) $info[3]";
             }
             when ( 'name' )
             {
@@ -449,8 +467,9 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] eq 'capture')
                {
                   $info[1] = $info[4];
+                  $$players{$info[4]}{team} = $info[3];
 
-                  $msg = ":flags: captured the $$teams{$info[2]} flag for team $$teams{$info[3]}" . ($$players{$info[4]}{recordset} ? sprintf(' in a record %.4f seconds!', $$players{$info[4]}{recordset}) : '');
+                  $msg = ":flags: captured the $$teams{$info[2]}{color} flag for team $$teams{$info[3]}{color}" . ($$players{$info[4]}{recordset} ? sprintf(' in a record %.4f seconds!', $$players{$info[4]}{recordset}) : '');
 
                   delete $$players{$info[4]}{recordset};
                }
@@ -523,7 +542,7 @@ my $xonstream = IO::Async::Socket->new(
 
                         $tscorelabels[$_] = $label;
 
-                        if ($flags =~ /!!/)
+                        if ($flags && $flags =~ /!!/)
                         {
                            $tscorekey   = $label;
                            $tscoreorder = 1 if ($flags =~ /</);
@@ -549,6 +568,7 @@ my $xonstream = IO::Async::Socket->new(
                   }
 
                   $$pscores{$info[5]}{PTIME} = $info[3];
+                  $$pscores{$info[5]}{TEAM}  = $info[4];
                   $$pscores{$info[5]}{NAME}  = qfont_decode($info[6], 1);
                }
             }
@@ -590,7 +610,7 @@ my $xonstream = IO::Async::Socket->new(
                   my @tkeys = keys(%$tscores);
 
                   $tt = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle');
-                  my @tcols  = grep { length } reverse @tscorelabels;
+                  my @tcols  = grep { length } @tscorelabels;
 
                   $tt->columns(['TEAM', @tcols]);
 
@@ -601,13 +621,16 @@ my $xonstream = IO::Async::Socket->new(
                   {
                      my @row;
 
-                     push(@row, $$teams{$id});
-                     push(@row, $$tscores{$id}{$_}) for (@tcols);
+                     push(@row, $$teams{$id}{color});
+                     push(@row, int($$tscores{$id}{$_})) for (@tcols);
 
                      $tt->add_row(\@row);
                   }
+
+                  @pkeys_sorted = sort {$$pscores{$b}{TEAM} <=> $$pscores{$a}{TEAM}} @pkeys;
                }
 
+               my $lastteam;
                for my $id (@pkeys_sorted)
                {
                   my @row;
@@ -640,6 +663,11 @@ my $xonstream = IO::Async::Socket->new(
                         {
                            push(@row, $$pscores{$id}{$_} ? $$pscores{$id}{$_} : '-');
                         }
+                        when ( 'SCORE' )
+                        {
+                           # server reported score in CA = DMG/100; Xonotic bug
+                           push(@row, (($type && $type eq 'CA') ? '?' : int($$pscores{$id}{$_})));
+                        }
                         default
                         {
                            push(@row, $$pscores{$id}{$_});
@@ -647,14 +675,22 @@ my $xonstream = IO::Async::Socket->new(
                      }
                   }
 
-                  for (qw(BCTIME CAPTIME ELO DMG DMGTAKEN DMG+ DMG- FASTEST FPS))
-                  {
-                     $t->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
-                  }
+                  # more correct but breaks table formatting in discord when wrapping
+                  #for (qw(BCTIME CAPTIME ELO DMG DMGTAKEN DMG+ DMG- FASTEST FPS))
+                  #{
+                  #   $t->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
+                  #}
 
                   push(@row, duration($$pscores{$id}{PTIME}, 1));
 
                   $t->add_row(\@row);
+
+                  if ($teamplay)
+                  {
+                     # TODO: for some reason $t->add_row_separator() does nothing
+                     $t->add_row_separator() if ($lastteam && ($lastteam != $$pscores{$id}{TEAM}));
+                     $lastteam = $$pscores{$id}{TEAM};
+                  }
                }
 
                $discord->send_message( $$config{discord}{linkchan}, ":video_game: `$heading`" );
@@ -677,7 +713,7 @@ my $xonstream = IO::Async::Socket->new(
                say localtime(time) . "\n$t_text";
 
                my $of;
-               my $filename = "$$config{logdir}/$matchid.txt";
+               my $filename = $matchid eq 'none' ? "$$config{logdir}/$matchid.txt" : "$$config{logdir}/0." . time . '_no_id.txt';
                if ($$config{logdir} && $matchid && ($of = IO::File->new($filename, '>>:encoding(UTF-8)')))
                {
                   $of->print($heading . "\n");
@@ -693,7 +729,7 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'gameover' )
             {
-               $matchid  = 'intermission';
+               $matchid = 'none';
             }
          }
 
@@ -812,7 +848,7 @@ sub discord_on_message_create ()
             }
             else
             {
-               $discord->send_message( $channel, "Type: **$type**  Map: **$map**  Players: **" . ((keys %$players) - $bots) . '**' );
+               $discord->send_message( $channel, 'Type: **' . ($instagib ? 'i' : '') . "$type**  Map: **$map**  Players: **" . ((keys %$players) - $bots) . '**' );
             }
          }
          elsif ( $msg =~ /$$config{xonstat_re}/ )
@@ -933,7 +969,7 @@ sub xonmsg ($usr, $msg)
 
 sub rcon ($line)
 {
-   encode_utf8($line);
+   $line = encode_utf8($line);
 
    if ($$config{secure} == 2)
    {
