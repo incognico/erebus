@@ -713,7 +713,7 @@ my $xonstream = IO::Async::Socket->new(
                say localtime(time) . "\n$t_text";
 
                my $of;
-               my $filename = $matchid eq 'none' ? "$$config{logdir}/$matchid.txt" : "$$config{logdir}/0." . time . '_no_id.txt';
+               my $filename = $matchid ne 'none' ? "$$config{logdir}/$matchid.txt" : "$$config{logdir}/0." . time . '_no_id.txt';
                if ($$config{logdir} && $matchid && ($of = IO::File->new($filename, '>>:encoding(UTF-8)')))
                {
                   $of->print($heading . "\n");
