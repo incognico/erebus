@@ -21,8 +21,8 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
+# - teamplay: sort players also by teamscore (pscore->tscore->tid)
 # - split endmatch scoreboard before $discord_char_limit on newline
-# - sort player scoreboard in teams with line sep or 1 msg per team
 # - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
 #   - make use of IO::Async for this and get rid of @cmdqueue
@@ -66,8 +66,8 @@ my $self;
 my $config = {
    game   => 'Xonotic',                    # Initial 'Playing' status in discord, get overwritten after a map is loaded anyways
    remip  => '2a02:c207:3003:5281::1',     # IP of the Xonotic server
-   port   => 26000,                        # Port of the Xonotic Server, local port = this + 444
-   locip  => undef,                        # Local IP, if undef it uses $remip
+   port   => 26660,                        # Port of the Xonotic Server, local port = this + 444 (log_dest_udp port)
+   locip  => undef,                        # Local IP, if undef it uses $remip (log_dest_udp ip)
    secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
    smbmod => 1,                            # Set to 1 if server uses SMB modpack, otherwise you should set sv_adminnick "^8DISCORD^3" in server.cfg
    pass   => '',                           # rcon_password in server.cfg
@@ -88,8 +88,9 @@ my $config = {
    xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
    rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 };
-# You can also experiemnt with different table border styles and paddings, Default::csingle with default (1) cell_pad looks nice but uses lots of space and chars
+# You can also experiment with different table border styles and paddings, Default::csingle with default (1) cell_pad looks nice but uses lots of space and chars
 # As soon as it warps it looks off in discord. To get as tight as possible use Default::singlei_utf8, cell_pad 0 and extend the $shortnames hash even more.
+# cell_pad 0 breaks even more on wrapping but does not wrap so often, it really needs to be played around with.
 
 my $discord = Mojo::Discord->new(
    'version'   => 9999,
@@ -105,29 +106,36 @@ my $discord = Mojo::Discord->new(
 
 my $teams = {
    -1 => {
-      color => 'NONE',
+      color  => 'NONE',
+      scolor => '-',
    },
    1 => {
-      color => 'NONE',
+      color  => 'NONE',
+      scolor => '-',
    },
    5 => {
-      color => 'RED',
-      id    => 1,
+      color  => 'RED',
+      scolor => 'R',
+      id     => 1,
    },
    10 => {
-      color => 'PINK',
-      id => 4,
+      color  => 'PINK',
+      scolor => 'P',
+      id     => 4,
    },
    13 => {
-      color => 'YELLOW',
-      id => 3,
+      color  => 'YELLOW',
+      scolor => 'Y',
+      id     => 3,
    },
    14 => {
-      color => 'BLUE',
-      id => 2,
+      color  => 'BLUE',
+      scolor => 'B',
+      id     => 2,
    },
    spectator => {
-      color => 'SPECTATOR',
+      color  => 'SPECTATOR',
+      scolor => 'S',
    },
 };
 
@@ -400,7 +408,6 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] =~ /^([a-z]+)_(.+)$/)
                {
                   ($type, $map) = (uc($1), $2);
-                  $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } );
                }
             }
             when ( 'gameinfo' )
@@ -408,6 +415,10 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] eq 'mutators' && $info[2] eq 'LIST')
                {
                   $instagib = 'instagib' ~~ @info[3..$#info] ? 1 : 0;
+               } 
+               elsif ($info[1] eq 'end')
+               {
+                  $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } ) if ($type && $map);
                }
             }
             when ( 'startdelay_ended' )
@@ -563,6 +574,7 @@ my $xonstream = IO::Async::Socket->new(
                   {
                      if ($pscorelabels[$i])
                      {
+                        # *-1 for correct sorting, abs()'d later, in CTS scoreflag is < but 0 is worst
                         $$pscores{$info[5]}{$pscorelabels[$i]} = $pscorelabels[$i] eq 'FASTEST' ? $score[$i]*-1 : $score[$i];
                      }
                   }
@@ -597,7 +609,15 @@ my $xonstream = IO::Async::Socket->new(
 
                my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle');
                my @cols  = grep { length && !/^FPS$/ } @pscorelabels;
-               @cols     = grep { !/^TEAMKILLS|TK$/ }  @cols unless $teamplay;
+
+               if ($teamplay)
+               {
+                  unshift(@cols, 'T');
+               }
+               else
+               {
+                  @cols = grep { !/^TEAM(KILLS)?|TK$/ } @cols;
+               }
 
                $t->columns(['NAME', @cols, 'PTIME']);
 
@@ -627,12 +647,18 @@ my $xonstream = IO::Async::Socket->new(
                      $tt->add_row(\@row);
                   }
 
-                  @pkeys_sorted = sort {$$pscores{$b}{TEAM} <=> $$pscores{$a}{TEAM}} @pkeys;
+                  @pkeys_sorted = sort {$$pscores{$a}{TEAM} <=> $$pscores{$b}{TEAM}} @pkeys;
                }
 
                my $lastteam;
                for my $id (@pkeys_sorted)
                {
+                  if ($teamplay)
+                  {
+                     $t->add_row_separator() if ($lastteam && ($lastteam != $$pscores{$id}{TEAM}));
+                     $lastteam = $$pscores{$id}{TEAM};
+                  }
+
                   my @row;
 
                   $$pscores{$id}{NAME} =~ s/[^\x00-\xFF]|\s+//g;
@@ -643,6 +669,10 @@ my $xonstream = IO::Async::Socket->new(
                   {
                      given ( $_ )
                      {
+                        when ( /^T(EAM)?$/ )
+                        {
+                           push(@row, $$teams{$$pscores{$id}{TEAM}}{scolor}) if $teamplay;
+                        }
                         when ( 'BCTIME' )
                         {
                            push(@row, duration($$pscores{$id}{$_}, 1));
@@ -666,7 +696,7 @@ my $xonstream = IO::Async::Socket->new(
                         when ( 'SCORE' )
                         {
                            # server reported score in CA = DMG/100; Xonotic bug
-                           push(@row, (($type && $type eq 'CA') ? '?' : int($$pscores{$id}{$_})));
+                           push(@row, ($type && $type eq 'CA') ? '?' : int($$pscores{$id}{$_}));
                         }
                         default
                         {
@@ -684,13 +714,6 @@ my $xonstream = IO::Async::Socket->new(
                   push(@row, duration($$pscores{$id}{PTIME}, 1));
 
                   $t->add_row(\@row);
-
-                  if ($teamplay)
-                  {
-                     # TODO: for some reason $t->add_row_separator() does nothing
-                     $t->add_row_separator() if ($lastteam && ($lastteam != $$pscores{$id}{TEAM}));
-                     $lastteam = $$pscores{$id}{TEAM};
-                  }
                }
 
                $discord->send_message( $$config{discord}{linkchan}, ":video_game: `$heading`" );
@@ -730,6 +753,7 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'gameover' )
             {
                $matchid = 'none';
+               $discord->status_update( { 'name' => $$config{'game'}, type => 0 } ) if ( $$config{'game'} );
             }
          }
 
