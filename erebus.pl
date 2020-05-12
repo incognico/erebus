@@ -21,7 +21,6 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
-# - teamplay: sort players also by teamscore (pscore->tscore->tid)
 # - split endmatch scoreboard before $discord_char_limit on newline
 # - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
@@ -647,7 +646,16 @@ my $xonstream = IO::Async::Socket->new(
                      $tt->add_row(\@row);
                   }
 
-                  @pkeys_sorted = sort {$$pscores{$a}{TEAM} <=> $$pscores{$b}{TEAM}} @pkeys;
+                  if ($tscoreorder)
+                  {
+                     @pkeys_sorted = sort {$$tscores{$$pscores{$a}{TEAM}}{$tscorekey} <=> $$tscores{$$pscores{$b}{TEAM}}{$tscorekey}} @pkeys_sorted;
+                  }
+                  else
+                  {
+                     @pkeys_sorted = sort {$$tscores{$$pscores{$b}{TEAM}}{$tscorekey} <=> $$tscores{$$pscores{$a}{TEAM}}{$tscorekey}} @pkeys_sorted;
+                  }
+
+                  @pkeys_sorted = sort {$$pscores{$b}{TEAM} <=> $$pscores{$a}{TEAM}} @pkeys_sorted;
                }
 
                my $lastteam;
@@ -669,6 +677,11 @@ my $xonstream = IO::Async::Socket->new(
                   {
                      given ( $_ )
                      {
+                        when ( 'SCORE' )
+                        {
+                           # server reported score in CA = DMG/100; Xonotic bug
+                           push(@row, ($type && $type eq 'CA') ? '?' : int($$pscores{$id}{$_}));
+                        }
                         when ( /^T(EAM)?$/ )
                         {
                            push(@row, $$teams{$$pscores{$id}{TEAM}}{scolor}) if $teamplay;
@@ -692,11 +705,6 @@ my $xonstream = IO::Async::Socket->new(
                         when ( 'FPS' )
                         {
                            push(@row, $$pscores{$id}{$_} ? $$pscores{$id}{$_} : '-');
-                        }
-                        when ( 'SCORE' )
-                        {
-                           # server reported score in CA = DMG/100; Xonotic bug
-                           push(@row, ($type && $type eq 'CA') ? '?' : int($$pscores{$id}{$_}));
                         }
                         default
                         {
@@ -759,7 +767,7 @@ my $xonstream = IO::Async::Socket->new(
 
          if (defined $msg)
          {
-            return unless (exists $$players{$info[1]});
+            return unless (defined $$players{$info[1]}{name});
 
             $msg =~ s/(\s|\R)+/ /g;
             $msg =~ s/\@+everyone/everyone/g;
