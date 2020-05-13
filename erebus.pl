@@ -706,7 +706,7 @@ my $xonstream = IO::Async::Socket->new(
                         }
                         when ( 'ELO' )
                         {
-                           push(@row, $$pscores{$id}{$_} =< 0 ? '-' : int($$pscores{$id}{$_}));
+                           push(@row, $$pscores{$id}{$_} <= 0 ? '-' : int($$pscores{$id}{$_}));
                         }
                         when ( 'FPS' )
                         {
