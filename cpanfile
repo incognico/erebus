@@ -13,6 +13,7 @@ requires 'LWP::Simple';
 requires 'MaxMind::DB::Reader';
 requires 'Text::ANSI::WideUtil';
 requires 'Text::ANSITable';
+requires 'Unicode::Homoglyph::Replace';
 requires 'Unicode::Truncate';
 recommends 'JSON::XS';
 recommends 'MaxMind::DB::Reader::XS';

@@ -22,6 +22,7 @@
 
 # TODO:
 # - split endmatch scoreboard before $discord_char_limit on newline
+# - socket: verify UDP sender IP ($addr == $remip) return if not matching
 # - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
 #   - make use of IO::Async for this and get rid of @cmdqueue
@@ -45,20 +46,21 @@ no warnings qw(experimental::signatures experimental::smartmatch);
 binmode( STDOUT, ":encoding(UTF-8)" );
 
 #use Data::Dumper;
-use Mojo::Discord;
+use Digest::HMAC;
+use Digest::MD4;
+use Encode::Simple qw(encode_utf8 decode_utf8);
 use IO::Async::Loop::Mojo;
 use IO::Async::Socket;
 use IO::File;
-use Digest::HMAC;
-use Digest::MD4;
-use MaxMind::DB::Reader;
-use Encode::Simple qw(encode_utf8 decode_utf8);
-use Unicode::Truncate;
-use Text::ANSITable;
-use LWP::Simple qw($ua get);
 use JSON;
+use LWP::Simple qw($ua get);
+use MaxMind::DB::Reader;
+use Mojo::Discord;
+use Text::ANSITable;
+use Unicode::Homoglyph::Replace 'replace_homoglyphs';
+use Unicode::Truncate;
 
-$ua->timeout( 6 );
+$ua->timeout( 5 );
 
 my $self;
 
@@ -316,7 +318,7 @@ my $xonstream = IO::Async::Socket->new(
 
       ($recvbuf .= $dgram) =~ s/${qheader}n?//g;
 
-      while( $recvbuf =~ s/^(.*?)\n// )
+      while( $recvbuf =~ s/^(.*?)\R// )
       {
          my $line = decode_utf8(stripcolors($1));
 
@@ -329,6 +331,7 @@ my $xonstream = IO::Async::Socket->new(
             join      => 5,
             name      => 3,
             player    => 7,
+            stupidworkaround => 2,
          };
 
          my @info = (split /:/, $line, $$fields{($line =~ /^([^:]*)/)[0]} || -1);
@@ -340,6 +343,13 @@ my $xonstream = IO::Async::Socket->new(
 
          given ( $info[0] )
          {
+            when ( 'stupidworkaround' )
+            {
+               ($bots, $players, $teamplay, $matchid, @lastplayers) = (0, {}, 0, 'none', ());
+
+               $map = $info[1] if $info[1];
+               $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } ) if ($type && $map);
+            }
             when ( 'join' )
             {
                 $$players{$info[1]}{slot} = $info[2];
@@ -362,7 +372,7 @@ my $xonstream = IO::Async::Socket->new(
             {
                $delaydelete = $info[1];
 
-               if (defined $$players{$info[1]})
+               if (defined $$players{$info[1]}{ip})
                {
                   unless ($$players{$info[1]}{ip} eq 'bot')
                   {
@@ -397,10 +407,7 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'gamestart' )
             {
-               ($bots, $players, $teamplay)
-             = (0,     {},       0        );
-               (@pscorelabels, $pscorekey, $pscoreorder, $pscores, @tscorelabels, $tscorekey, $tscoreorder, $tscores)
-             = ((),            'SCORE',    0,            {},       (),            'SCORE',    0,            {}      );
+               ($bots, $players, $teamplay) = (0, {}, 0);
 
                $matchid = $info[2];
 
@@ -635,6 +642,7 @@ my $xonstream = IO::Async::Socket->new(
 
                   my @tkeys_sorted = sort {$$tscores{$b}{$tscorekey} <=> $$tscores{$a}{$tscorekey}} @tkeys;
                   @tkeys_sorted    = reverse(@tkeys_sorted) if $tscoreorder;
+                  # TODO: secondary team score?
 
                   for my $id (@tkeys_sorted)
                   {
@@ -646,16 +654,10 @@ my $xonstream = IO::Async::Socket->new(
                      $tt->add_row(\@row);
                   }
 
-                  if ($tscoreorder)
-                  {
-                     @pkeys_sorted = sort {$$tscores{$$pscores{$a}{TEAM}}{$tscorekey} <=> $$tscores{$$pscores{$b}{TEAM}}{$tscorekey}} @pkeys_sorted;
-                  }
-                  else
-                  {
-                     @pkeys_sorted = sort {$$tscores{$$pscores{$b}{TEAM}}{$tscorekey} <=> $$tscores{$$pscores{$a}{TEAM}}{$tscorekey}} @pkeys_sorted;
-                  }
-
-                  @pkeys_sorted = sort {$$pscores{$b}{TEAM} <=> $$pscores{$a}{TEAM}} @pkeys_sorted;
+                  @pkeys_sorted = sort {
+                     $$pscores{$b}{TEAM} <=> $$pscores{$a}{TEAM} ||
+                     $$tscores{$$pscores{($tscoreorder ? $a : $b)}{TEAM}}{$tscorekey} <=> $$tscores{$$pscores{($tscoreorder ? $b : $a)}{TEAM}}{$tscorekey}
+                  } @pkeys_sorted;
                }
 
                my $lastteam;
@@ -714,7 +716,7 @@ my $xonstream = IO::Async::Socket->new(
                   }
 
                   # more correct but breaks table formatting in discord when wrapping
-                  #for (qw(BCTIME CAPTIME ELO DMG DMGTAKEN DMG+ DMG- FASTEST FPS))
+                  #for (qw(BCTIME CAPTIME DMG DMGTAKEN DMG+ DMG- ELO FASTEST FPS SCORE))
                   #{
                   #   $t->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
                   #}
@@ -757,10 +759,13 @@ my $xonstream = IO::Async::Socket->new(
                }
 
                @lastplayers = @pkeys_sorted;
+
+               (@pscorelabels, $pscorekey, $pscoreorder, $pscores, @tscorelabels, $tscorekey, $tscoreorder, $tscores)
+             = ((),            'SCORE',    0,            {},       (),            'SCORE',    0,            {}      );
             }
             when ( 'gameover' )
             {
-               $matchid = 'none';
+               ($teamplay, $matchid) = (0, 'none');
                $discord->status_update( { 'name' => $$config{'game'}, type => 0 } ) if ( $$config{'game'} );
             }
          }
@@ -774,16 +779,16 @@ my $xonstream = IO::Async::Socket->new(
             $msg =~ s/\@+here/here/g;
             $msg =~ s/$discord_markdown_pattern/\\$1/g;
 
-            say localtime(time) . " -> <$$players{$info[1]}{name}> $msg";
+            my $nick = $$players{$info[1]}{name};
+            $nick =~ s/`//g;
 
-            $$players{$info[1]}{name} =~ s/`//g;
-
-            my $final = "`$$players{$info[1]}{name}`  $msg";
+            my $final = "`$nick`  $msg";
 
             $final =~ s/^/$$config{discord}{partmoji} / if ($$config{discord}{partmoji} && $info[0] eq 'part');
             $final =~ s/^/$$config{discord}{joinmoji} / if ($$config{discord}{joinmoji} && $info[0] eq 'join');
 
             $discord->send_message( $$config{discord}{linkchan}, ':flag_' . $$players{$info[1]}{geo} . ': ' . $final );
+            say localtime(time) . " -> <$nick> $msg";
          }
 
          delete $$players{$delaydelete} if (defined $delaydelete);
@@ -846,26 +851,20 @@ sub discord_on_message_create ()
                return;
             }
 
+            my $nick = defined $$member{'nick'} ? $$member{'nick'} : $$author{'username'};
+
             $msg =~ s/`//g;
-            $msg =~ s/\^/\^\^/g;
-            if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
+            if ( $msg =~ s/<@!?(\d+)>/\@$nick/g ) # user/nick
             {
                $msg =~ s/(?:\R^)\@$self->{'users'}->{$1}->{'username'}/ >>> /m if ($1 == $self->{'id'}); # quote
             }
-            $msg =~ s/(?:\R|\s)+/ /g;
             $msg =~ s/<#(\d+)>/#$self->{'channelnames'}->{$1}/g; # channel
             $msg =~ s/<@&(\d+)>/\@$self->{'rolenames'}->{$1}/g; # role
             $msg =~ s/<a?(:.+:)\d+>/$1/g; # emoji
-            $msg = stripcolors($msg);
 
             return unless $msg;
 
-            my $nick = defined $$member{'nick'} ? $$member{'nick'} : $$author{'username'};
-            $nick =~ s/\^/\^\^/g;
-            $nick = stripcolors($nick);
-
             say localtime(time) . " <- <$nick> $msg";
-
             xonmsg($nick, $msg);
          }
          elsif ( $channel ~~ $$config{discord}{nocmdchans}->@* )
@@ -992,9 +991,14 @@ sub discord_on_message_create ()
    return;
 }
 
-sub xonmsg ($usr, $msg)
+sub xonmsg ($nick, $msg)
 {
-   rcon($$config{smbmod} ? "ircmsg ^3(^8DISCORD^3) ^7$usr^3: ^7$msg" : "msg ^7$usr^3: ^7$msg");
+   $nick = rconquote($nick);
+   $msg  = rconquote($msg);
+
+   my $line = $$config{smbmod} ? 'sv_cmd ircmsg ^3(^8DISCORD^3) ^7' . $nick . '^3: ^7' . $msg : 'say "^7' . $nick . '^3: ^7' . $msg . '"';
+
+   rcon($line);
 
    return;
 }
@@ -1052,6 +1056,17 @@ sub qfont_decode ($qstr, $ascii = 0)
 sub stripcolors ($str)
 {
    $str =~ s/\^(\d|x[\dA-Fa-f]{3})//g;
+
+   return $str;
+}
+
+sub rconquote ($str)
+{
+   $str =~ s/[\000-\037|\377]//g;
+   $str =~ s/(?:\R|\s)+/ /g;
+   $str =~ s/\^/\^\^/g;
+   $str = stripcolors($str);
+   $str = replace_homoglyphs($str);
 
    return $str;
 }
