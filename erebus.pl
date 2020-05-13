@@ -21,8 +21,10 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
-# - split endmatch scoreboard before $discord_char_limit on newline
-# - socket: verify UDP sender IP ($addr == $remip) return if not matching
+# - improve sorting (team secondary for players & team)
+# - shortnames only when $teamplay?
+# - mojo-discord promises for sending split scoretable or hack it by misusing IO::Async
+#   - the message order must be preserved in discord
 # - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
 #   - make use of IO::Async for this and get rid of @cmdqueue
@@ -176,14 +178,17 @@ my $shortnames = {
    'BCKILLS'   => 'BCK',
    'DMG'       => 'DMG+',
    'DMGTAKEN'  => 'DMG-',
+   'DROPS'     => 'DRPS',
    'FCKILLS'   => 'FCK',
-   'PICKUPS'   => 'PCKUPS',
+   'KILLS'     => 'FRGS',
+   'PICKUPS'   => 'PCKS',
+   'RETURNS'   => 'RETS',
    'REVIVALS'  => 'REVS',
    'SUICIDES'  => 'SK',
    'TEAMKILLS' => 'TK',
 };
 
-my $discord_char_limit = 2000;
+my $discord_char_limit = 1990; # -10
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
 my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||__|\*|~|>)/;
@@ -613,7 +618,7 @@ my $xonstream = IO::Async::Socket->new(
                $heading   .= "Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
                $heading   .= ' <<<';
 
-               my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle');
+               my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8');
                my @cols  = grep { length && !/^FPS$/ } @pscorelabels;
 
                if ($teamplay)
@@ -635,14 +640,13 @@ my $xonstream = IO::Async::Socket->new(
                {
                   my @tkeys = keys(%$tscores);
 
-                  $tt = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::csingle');
+                  $tt = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8');
                   my @tcols  = grep { length } @tscorelabels;
 
                   $tt->columns(['TEAM', @tcols]);
 
                   my @tkeys_sorted = sort {$$tscores{$b}{$tscorekey} <=> $$tscores{$a}{$tscorekey}} @tkeys;
                   @tkeys_sorted    = reverse(@tkeys_sorted) if $tscoreorder;
-                  # TODO: secondary team score?
 
                   for my $id (@tkeys_sorted)
                   {
@@ -702,7 +706,7 @@ my $xonstream = IO::Async::Socket->new(
                         }
                         when ( 'ELO' )
                         {
-                           push(@row, $$pscores{$id}{$_} < 0 ? '-' : int($$pscores{$id}{$_}));
+                           push(@row, $$pscores{$id}{$_} =< 0 ? '-' : int($$pscores{$id}{$_}));
                         }
                         when ( 'FPS' )
                         {
@@ -742,7 +746,7 @@ my $xonstream = IO::Async::Socket->new(
                my $t_text = $t->draw;
                $t_text =~ s/(?:^\s|\s$)//gm;
 
-               $discord->send_message( $$config{discord}{linkchan}, "```\n$t_text```" );
+               $discord->send_message( $$config{discord}{linkchan}, "```\n$1```" ) while ($t_text =~ /\G(.{0,$discord_char_limit}(?:.\z|\R))/sg);
                say localtime(time) . "\n$t_text";
 
                my $of;
