@@ -51,7 +51,7 @@ use Encode::Simple qw(encode_utf8 decode_utf8);
 use IO::Async::Loop::Mojo;
 use IO::Async::Socket;
 use IO::File;
-use JSON;
+use JSON::MaybeXS;
 use LWP::Simple qw($ua get);
 use MaxMind::DB::Reader;
 use Mojo::Discord;
@@ -189,7 +189,7 @@ my $shortnames = {
    'TEAMKILLS' => 'TK',
 };
 
-my $discord_char_limit = 1990; # -10
+my $discord_char_limit = 1980; # -20
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
 my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||__|\*|~|>)/;
@@ -479,7 +479,7 @@ my $xonstream = IO::Async::Socket->new(
             {
                if ($type && $type eq 'CTS') 
                {
-                  $msg = ':checkered_flag: set a record: ' . sprintf(' %.4f seconds!', $info[2]);
+                  $msg = ':checkered_flag: set a record: ' . sprintf(' %.3f seconds!', $info[2]);
                }
                else
                {
@@ -493,7 +493,7 @@ my $xonstream = IO::Async::Socket->new(
                   $info[1] = $info[4];
                   $$players{$info[4]}{team} = $info[3];
 
-                  $msg = ":flags: captured the $$teams{$info[2]}{color} flag for team $$teams{$info[3]}{color}" . ($$players{$info[4]}{recordset} ? sprintf(' in a record %.4f seconds!', $$players{$info[4]}{recordset}) : '');
+                  $msg = ":flags: captured the $$teams{$info[2]}{color} flag for team $$teams{$info[3]}{color}" . ($$players{$info[4]}{recordset} ? sprintf(' in a record %.3f seconds!', $$players{$info[4]}{recordset}) : '');
 
                   delete $$players{$info[4]}{recordset};
                }
@@ -667,7 +667,10 @@ my $xonstream = IO::Async::Socket->new(
 
                   $tt->columns(['TEAM', @tcols]);
 
-                  my @tkeys_sorted = sort {$$tscores{$b}{$tscorekey} <=> $$tscores{$a}{$tscorekey}} @tkeys;
+                  my @tkeys_sorted = sort {
+                     $$tscores{$a} <=> $$tscores{$b} ||
+                     $$tscores{$b}{$tscorekey} <=> $$tscores{$a}{$tscorekey}
+                  } @tkeys;
                   @tkeys_sorted    = reverse(@tkeys_sorted) if $tscoreorder;
 
                   for my $id (@tkeys_sorted)
@@ -761,14 +764,14 @@ my $xonstream = IO::Async::Socket->new(
                   $tt_text = $tt->draw;
                   $tt_text =~ s/^\s|\s$//gm;
 
-                  $discord->send_message_content_blocking( $$config{discord}{linkchan}, "```\n$tt_text```" );
+                  $discord->send_message_content_blocking( $$config{discord}{linkchan}, "```q\n$tt_text\n```" );
                   say localtime(time) . "\n" . $tt_text;
                }
 
                my $t_text = $t->draw;
                $t_text =~ s/^\s|\s$//gm;
 
-               $discord->send_message_content_blocking( $$config{discord}{linkchan}, "```\n$1```" ) while ($t_text =~ /\G(.{0,$discord_char_limit}(?:.\z|\R))/sg);
+               $discord->send_message_content_blocking( $$config{discord}{linkchan}, "```q\n$1\n```" ) while ($t_text =~ /\G(.{0,$discord_char_limit}(?:.\z|\R))/sg);
                say localtime(time) . "\n$t_text";
 
                my $of;
@@ -932,21 +935,21 @@ sub discord_on_message_create ()
                return;
             }
 
-            my $snick   = $stats->[0]->{player}->{stripped_nick};
-            my $games   = $stats->[0]->{games_played}->{overall}->{games};
-            my $win     = $stats->[0]->{games_played}->{overall}->{wins};
-            my $loss    = $stats->[0]->{games_played}->{overall}->{losses};
-            my $pct     = $stats->[0]->{games_played}->{overall}->{win_pct};
-            my $kills   = $stats->[0]->{overall_stats}->{overall}->{total_kills};
-            my $deaths  = $stats->[0]->{overall_stats}->{overall}->{total_deaths};
-            my $ratio   = $stats->[0]->{overall_stats}->{overall}->{k_d_ratio};
-            my $elo     = $stats->[0]->{elos}->{overall}->{elo} ? $stats->[0]->{elos}->{overall}->{elo}          : 0;
-            my $elot    = $stats->[0]->{elos}->{overall}->{elo} ? $stats->[0]->{elos}->{overall}->{game_type_cd} : 0;
-            my $elog    = $stats->[0]->{elos}->{overall}->{elo} ? $stats->[0]->{elos}->{overall}->{games}        : 0;
-            my $capr    = $stats->[0]->{overall_stats}->{ctf}->{cap_ratio} ? $stats->[0]->{overall_stats}->{ctf}->{cap_ratio} : 0;
-            my $favmap  = $stats->[0]->{fav_maps}->{overall}->{map_name};
-            my $favmapt = $stats->[0]->{fav_maps}->{overall}->{game_type_cd};
-            my $lastp   = $stats->[0]->{overall_stats}->{overall}->{last_played_fuzzy};
+            my $snick   = $$stats[0]{player}{stripped_nick};
+            my $games   = $$stats[0]{games_played}{overall}{games};
+            my $win     = $$stats[0]{games_played}{overall}{wins};
+            my $loss    = $$stats[0]{games_played}{overall}{losses};
+            my $pct     = $$stats[0]{games_played}{overall}{win_pct};
+            my $kills   = $$stats[0]{overall_stats}{overall}{total_kills};
+            my $deaths  = $$stats[0]{overall_stats}{overall}{total_deaths};
+            my $ratio   = $$stats[0]{overall_stats}{overall}{k_d_ratio};
+            my $elo     = $$stats[0]{elos}{overall}{elo} ? $$stats[0]{elos}{overall}{elo}          : 0;
+            my $elot    = $$stats[0]{elos}{overall}{elo} ? $$stats[0]{elos}{overall}{game_type_cd} : 0;
+            my $elog    = $$stats[0]{elos}{overall}{elo} ? $$stats[0]{elos}{overall}{games}        : 0;
+            my $capr    = $$stats[0]{overall_stats}{ctf}{cap_ratio} ? $$stats[0]{overall_stats}{ctf}{cap_ratio} : 0;
+            my $favmap  = $$stats[0]{fav_maps}{overall}{map_name};
+            my $favmapt = $$stats[0]{fav_maps}{overall}{game_type_cd};
+            my $lastp   = $$stats[0]{overall_stats}{overall}{last_played_fuzzy};
 
             my $embed = {
                'color' => '3447003',
@@ -1106,9 +1109,9 @@ sub duration ($sec, $nos = 0)
    $gmt[5] -= 70;
 
    return ($gmt[7] ?  $gmt[7]                                                        .'d' : '').
-          ($gmt[2] ? ($gmt[7]                       ? ($nos ? '' : ' ') : '').$gmt[2].'h' : '').
-          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? '' : ' ') : '').$gmt[1].'m' : '').
-          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? '' : ' ') : '').$gmt[0].'s' : '');
+          ($gmt[2] ? ($gmt[7]                       ? ($nos ? '‎' : ' ') : '').$gmt[2].'h' : '').
+          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? '‎' : ' ') : '').$gmt[1].'m' : '').
+          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? '‎' : ' ') : '').$gmt[0].'s' : '');
 }
 
 sub discord_on_ready ()
