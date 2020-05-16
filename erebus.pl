@@ -874,7 +874,7 @@ sub discord_on_message_create ()
                return unless $2;
 
                rcon($2);
-               $discord->send_message( $channel, '`sent`' );
+               $discord->create_reaction( $channel, $msgid, "\N{U+2705}" );
                say localtime(time) . " !! RCON used by: <$$author{'username'}> Command: $2";
 
                return;
@@ -1108,10 +1108,10 @@ sub duration ($sec, $nos = 0)
 
    $gmt[5] -= 70;
 
-   return ($gmt[7] ?  $gmt[7]                                                        .'d' : '').
-          ($gmt[2] ? ($gmt[7]                       ? ($nos ? '‎' : ' ') : '').$gmt[2].'h' : '').
-          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? '‎' : ' ') : '').$gmt[1].'m' : '').
-          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? '‎' : ' ') : '').$gmt[0].'s' : '');
+   return ($gmt[7] ?  $gmt[7]                                                                  .'d' : '').
+          ($gmt[2] ? ($gmt[7]                       ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[2].'h' : '').
+          ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[1].'m' : '').
+          ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[0].'s' : '');
 }
 
 sub discord_on_ready ()
