@@ -888,6 +888,7 @@ sub discord_on_message_create ()
 
             my $nick = defined $nickname ? $nickname : $username;
 
+            # TODO: use nick here too if available:
             $msg =~ s/`//g;
             if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
             {
