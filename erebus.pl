@@ -668,8 +668,8 @@ my $xonstream = IO::Async::Socket->new(
                   $tt->columns(['TEAM', @tcols]);
 
                   my @tkeys_sorted = sort {
-                     $$tscores{$a} <=> $$tscores{$b} ||
-                     $$tscores{$b}{$tscorekey} <=> $$tscores{$a}{$tscorekey}
+                     $$tscores{$b}{$tscorekey} <=> $$tscores{$a}{$tscorekey} ||
+                     $$tscores{$a} <=> $$tscores{$b}
                   } @tkeys;
                   @tkeys_sorted    = reverse(@tkeys_sorted) if $tscoreorder;
 
@@ -684,8 +684,8 @@ my $xonstream = IO::Async::Socket->new(
                   }
 
                   @pkeys_sorted = sort {
-                     $$pscores{$a}{TEAM} <=> $$pscores{$b}{TEAM} ||
-                     $$tscores{$$pscores{($tscoreorder ? $a : $b)}{TEAM}}{$tscorekey} <=> $$tscores{$$pscores{($tscoreorder ? $b : $a)}{TEAM}}{$tscorekey}
+                     $$tscores{$$pscores{($tscoreorder ? $a : $b)}{TEAM}}{$tscorekey} <=> $$tscores{$$pscores{($tscoreorder ? $b : $a)}{TEAM}}{$tscorekey} ||
+                     $$pscores{$a}{TEAM} <=> $$pscores{$b}{TEAM}
                   } @pkeys_sorted;
                }
 
@@ -700,6 +700,7 @@ my $xonstream = IO::Async::Socket->new(
 
                   my @row;
 
+                  $$pscores{$id}{NAME} = replace_homoglyphs($$pscores{$id}{NAME});
                   $$pscores{$id}{NAME} =~ s/[^\x00-\xFF]|\s+//g;
 
                   push(@row, truncate_egc($$pscores{$id}{NAME}, $teamplay ? 18 : 24, '~'));
@@ -710,8 +711,8 @@ my $xonstream = IO::Async::Socket->new(
                      {
                         when ( /SCO?RE/ )
                         {
-                           # server reported score in CA = DMG/100; Xonotic bug
-                           push(@row, ($type && $type eq 'CA') ? '?' : int($$pscores{$id}{$_}));
+                           # server reported score in CA = float, Xonotic "bug"
+                           push(@row, int($$pscores{$id}{$_}));
                         }
                         when ( /^T(EAM)?$/n )
                         {
@@ -803,7 +804,7 @@ my $xonstream = IO::Async::Socket->new(
          {
             return unless (defined $$players{$info[1]}{name});
 
-            $msg =~ s/(\s|\R)+/ /g;
+            $msg =~ s/(\s|\R)+/ /gn;
             $msg =~ s/\@+everyone/everyone/g;
             $msg =~ s/\@+here/here/g;
             $msg =~ s/$discord_markdown_pattern/\\$1/g;
@@ -828,18 +829,11 @@ my $xonstream = IO::Async::Socket->new(
 my $loop = IO::Async::Loop::Mojo->new();
 $loop->add($xonstream);
 $xonstream->connect(
-   addr => {
-      family   => $$config{remip} =~ /:/ ? 'inet6' : 'inet',
-      socktype => 'dgram',
-      port     => $$config{port},
-      ip       => $$config{remip},
-   },
-   local_addr => {
-      family   => defined $$config{locip} ? ( $$config{locip} =~ /:/ ? 'inet6' : 'inet' ) : ( $$config{remip} =~ /:/ ? 'inet6' : 'inet' ),
-      socktype => 'dgram',
-      port     => $$config{port}+444,
-      ip       => defined $$config{locip} ? $$config{locip} : $$config{remip},
-   },
+   socktype      => 'dgram',
+   service       => $$config{port},
+   local_service => $$config{port}+444,
+   host          => $$config{remip},
+   local_host    => defined $$config{locip} ? $$config{locip} : $$config{remip},
 )->get;
 $loop->run unless (Mojo::IOLoop->is_running);
 
@@ -847,21 +841,33 @@ exit;
 
 ###
 
+sub discord_on_ready ()
+{
+   $discord->gw->on('READY' => sub ($gw, $hash)
+   {
+      add_me($hash->{'user'});
+      $discord->status_update( { 'name' => $$config{'game'}, type => 0 } ) if ( defined $$config{'game'} );
+   });
+
+   return;
+}
+
 sub discord_on_message_create ()
 {
    $discord->gw->on('MESSAGE_CREATE' => sub ($gw, $hash)
    {
       my $id       = $hash->{'author'}->{'id'};
-      my $author   = $hash->{'author'};
-      my $member   = $hash->{'member'};
+      my $username = $hash->{'author'}->{'username'};
+      my $bot      = exists $hash->{'author'}->{'bot'} ? $hash->{'author'}->{'bot'} : 0;
+      my $nickname = $hash->{'member'}->{'nick'};
       my $msg      = $hash->{'content'};
       my $msgid    = $hash->{'id'};
       my $channel  = $hash->{'channel_id'};
       my @mentions = $hash->{'mentions'}->@*;
 
-      add_user($_) for(@mentions);
+      add_user($_) for (@mentions);
 
-      unless ( exists $author->{'bot'} && $author->{'bot'} )
+      unless ( $bot )
       {
          $msg =~ s/\@+everyone/everyone/g;
          $msg =~ s/\@+here/here/g;
@@ -875,12 +881,12 @@ sub discord_on_message_create ()
 
                rcon($2);
                $discord->create_reaction( $channel, $msgid, "\N{U+2705}" );
-               say localtime(time) . " !! RCON used by: <$$author{'username'}> Command: $2";
+               say localtime(time) . " !! RCON used by: <$username> Command: $2";
 
                return;
             }
 
-            my $nick = defined $$member{'nick'} ? $$member{'nick'} : $$author{'username'};
+            my $nick = defined $nickname ? $nickname : $username;
 
             $msg =~ s/`//g;
             if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
@@ -955,7 +961,7 @@ sub discord_on_message_create ()
                'color' => '3447003',
                'provider' => {
                   'name' => 'XonStat',
-                  'url' => 'https://stats.xonotic.org',
+                  'url'  => 'https://stats.xonotic.org',
                 },
                'thumbnail' => {
                   'url' => 'https://cdn.discordapp.com/emojis/706283635719929876.png?v=1',
@@ -1016,6 +1022,39 @@ sub discord_on_message_create ()
          }
       }
    });
+
+   return;
+}
+
+sub add_me ($user)
+{
+   $self->{'id'} = $user->{'id'};
+   add_user($user);
+
+   return;
+}
+
+sub add_user ($user)
+{
+   $self->{'users'}{$user->{'id'}} = $user;
+
+   return;
+}
+
+sub add_guild ($guild)
+{
+   $self->{'guilds'}{$guild->{'id'}} = $guild;
+
+   foreach my $channel ($guild->{'channels'}->@*)
+   {
+      $self->{'channels'}{$channel->{'id'}} = $guild->{'id'};
+      $self->{'channelnames'}{$channel->{'id'}} = $channel->{'name'}
+   }
+
+   foreach my $role ($guild->{'roles'}->@*)
+   {
+      $self->{'rolenames'}{$role->{'id'}} = $role->{'name'};
+   }
 
    return;
 }
@@ -1112,48 +1151,4 @@ sub duration ($sec, $nos = 0)
           ($gmt[2] ? ($gmt[7]                       ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[2].'h' : '').
           ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[1].'m' : '').
           ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[0].'s' : '');
-}
-
-sub discord_on_ready ()
-{
-   $discord->gw->on('READY' => sub ($gw, $hash)
-   {
-      add_me($hash->{'user'});
-      $discord->status_update( { 'name' => $$config{'game'}, type => 0 } ) if ( $$config{'game'} );
-   });
-
-   return;
-}
-
-sub add_me ($user)
-{
-   $self->{'id'} = $user->{'id'};
-   add_user($user);
-
-   return;
-}
-
-sub add_user ($user)
-{
-   $self->{'users'}{$user->{'id'}} = $user;
-
-   return;
-}
-
-sub add_guild ($guild)
-{
-   $self->{'guilds'}{$guild->{'id'}} = $guild;
-
-   foreach my $channel ($guild->{'channels'}->@*)
-   {
-      $self->{'channels'}{$channel->{'id'}} = $guild->{'id'};
-      $self->{'channelnames'}{$channel->{'id'}} = $channel->{'name'}
-   }
-
-   foreach my $role ($guild->{'roles'}->@*)
-   {
-      $self->{'rolenames'}{$role->{'id'}} = $role->{'name'};
-   }
-
-   return;
 }
