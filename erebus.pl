@@ -5,7 +5,6 @@
 #          In contrast to rcon2irc.pl this just links chats
 #
 # Requires https://github.com/vsTerminus/Mojo-Discord (release v3+)
-# with patch from https://github.com/vsTerminus/Mojo-Discord/issues/15#issuecomment-628817137
 #
 # Copyright 2020, Nico R. Wohlgemuth <nico@lifeisabug.com>
 
@@ -64,38 +63,62 @@ $ua->timeout( 5 );
 my $self;
 
 my $config = {
-   game   => 'Xonotic',                    # Initial 'Playing' status in discord, get overwritten after a map is loaded anyways
-   remip  => '2a02:c207:3003:5281::1',     # IP of the Xonotic server
+   remip  => '2a02:c207:3003:5281::1',     # IP or hostname of the Xonotic server
    port   => 26660,                        # Port of the Xonotic Server, local port = this + 444 (log_dest_udp port)
    locip  => undef,                        # Local IP, if undef it uses $remip (log_dest_udp ip)
    secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
-   smbmod => 1,                            # Set to 1 if server uses SMB modpack, otherwise you should set sv_adminnick "^8DISCORD^3" in server.cfg
+   smbmod => 1,                            # Set to 1 if server uses SMB modpack, otherwise use 0 and set sv_adminnick "^8DISCORD^3" in server.cfg
    pass   => '',                           # rcon_password in server.cfg
    geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
 
+   status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
+   xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
+   rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
+
    discord => {
      linkchan   => 706113584626663475, # The discord channel ID which will link discord and server chats
      nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
      client_id  => ,                   # Discord bot client ID https://discordapp.com/developers/applications/
-     owner_id   => 373912992758235148, # ID of the bots owner, if not 0 this allows the owner to use the !rcon command
-     joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji  if not empty ('') those will be displayed between the country flag
-     partmoji   => '<:gtfo:603609334781313037>',     # Part emoji  and the players nickname when joining or leaving the server
+     owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
+     joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji   if not empty ('') those will be displayed between the country flag
+     partmoji   => '<:gtfo:603609334781313037>',     # Part emoji   and the players nickname when joining or leaving the server
    },
 
-   status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
-   xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
-   rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
+   radio => {
+      enabled     => 1, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
+      youtube_dl  => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings -w -q)],
+      yt_api_key  => '',
+      cachedir    => "$ENV{HOME}/.xonotic/radiocache",
+      pk3webdir   => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
+      queuefile   => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio/queue.txt',
+      url         => 'http://distfiles.lifeisabug.com/xonotic/radio',
+      prefix      => 'radio-twlz-',
+      xoncmd_re   => qr/!queue (?:add)? ?(.+)/i,
+   },
 };
 # You can also experiment with different table border styles and paddings, Default::csingle with default (1) cell_pad looks nice but uses lots of space and chars
 # As soon as it warps it looks off in discord. To get as tight as possible use Default::singlei_utf8, cell_pad 0 and extend the $shortnames hash even more.
 # cell_pad 0 breaks even more on wrapping but does not wrap so often, it really needs to be played around with.
 
+if ($$config{radio}{enabled})
+{
+   push ($$config{radio}{youtube_dl}->@*, '-o');
+   push ($$config{radio}{youtube_dl}->@*, $$config{radio}{cachedir} . '/%(id)s.%(ext)s');
+
+   require IO::Async::Process;
+   require URI::Escape;
+   require File::Copy;
+   IO::Async::Process->import;
+   URI::Escape->import;
+   File::Copy->import;
+}
+
 my $discord = Mojo::Discord->new(
    'version'   => 9999,
    'url'       => 'https://xonotic.lifeisabug.com',
-   'token'     => '',
+   'token'     => '', # Discord bot secret token https://discordapp.com/developers/applications/
    'name'      => 'Erebus',
    'reconnect' => 1,
    'verbose'   => 0,
@@ -175,12 +198,15 @@ my $modes = {
 my $shortnames = {
    'BCKILLS'   => 'BCK',
    'DEATHS'    => 'DTHS',
+   'DESTROYED' => 'DSTRD',
    'DMG'       => 'DMG+',
    'DMGTAKEN'  => 'DMG-',
    'DROPS'     => 'DRPS',
    'FCKILLS'   => 'FCK',
+   'KCKILLS'   => 'KCK',
    'KILLS'     => 'KLLS',
    'PICKUPS'   => 'PUPS',
+   'PUSHES'    => 'PSHS',
    'RETURNS'   => 'RETS',
    'REVIVALS'  => 'REVS',
    'SCORE'     => 'SCRE',
@@ -394,6 +420,15 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'chat' )
             {
                $msg = $info[2];
+
+               if ($msg =~ /$$config{radio}{xoncmd_re}/)
+               {
+                  my $request = $1;
+
+                  $msg = ':musical_note: requests `' . $request . '` to be added to the radio queue';
+
+                  radioq_request($1);
+               }
             }
             when ( 'chat_spec' )
             {
@@ -796,7 +831,7 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'gameover' )
             {
                ($teamplay, $matchid) = (0, 'none');
-               $discord->status_update( { 'name' => $$config{'game'}, type => 0 } ) if ( $$config{'game'} );
+               $discord->status_update( { name => 'Xonotic', type => 0 } );
             }
          }
 
@@ -1152,4 +1187,109 @@ sub duration ($sec, $nos = 0)
           ($gmt[2] ? ($gmt[7]                       ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[2].'h' : '').
           ($gmt[1] ? ($gmt[7] || $gmt[2]            ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[1].'m' : '').
           ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[0].'s' : '');
+}
+
+sub radioq_request ($request)
+{
+   my ($search, $details, $vid, $title, $sec);
+
+   my $query  = uri_escape($request);
+   my $json_s = get("https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=$query&key=$$config{radio}{yt_api_key}");
+
+   if ($json_s)
+   {
+      $search = decode_json($json_s);
+   }
+   else
+   {
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube search API');
+      return;
+   }
+
+   if (scalar $$search{items}->@* > 0)
+   {
+      $vid    = $$search{items}[0]{id}{videoId};
+      $title  = rconquote($$search{items}[0]{snippet}{title});
+   
+      if (-f "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Already queued: ' . $title);
+         return;
+      }
+
+      my $json_v = get("https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=$vid&key=$$config{radio}{yt_api_key}");
+
+      if ($json_v)
+      {
+         $details = decode_json($json_v);
+      }
+      else
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube video API');
+         return;
+      }
+   }
+   else
+   {
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7No videos found :(');
+      return;
+   }
+
+   if (scalar $$details{items}->@* > 0)
+   {
+      $$details{items}[0]{contentDetails}{duration} =~ s/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/$sec = ($1 ? $1 * 60 * 60 : 0) + ($2 ? $2 * 60 : 0) + ($3 ? $3 : 0)/eg;
+
+      if (!$sec || $sec > 900)
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Video too long. Max. length: 15min :(');
+         return;
+      }
+   }
+   else
+   {
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying video details.');
+      return;
+   }
+
+   rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Processing: ' . $title);
+
+   my @ytdl = $$config{radio}{youtube_dl}->@*;
+   push(@ytdl, "https://www.youtube.com/watch?v=$vid");
+
+   $loop->open_process(
+      command => [@ytdl],
+
+      on_finish => sub ($process, $exitcode)
+      {
+         my $status = ($exitcode >> 8);
+
+         radioq_ytdl_to_xon($vid, $sec, $title) unless ($status);
+      },
+   );
+}
+
+sub radioq_ytdl_to_xon ($vid, $sec, $title)
+{
+   $loop->open_process(
+      command => ['zip', '-9', '-j', '-q', "$$config{radio}{cachedir}/$$config{radio}{prefix}$vid.pk3", "$$config{radio}{cachedir}/$vid.ogg"],
+
+      on_finish => sub ($process, $exitcode)
+      {
+         my $status = ($exitcode >> 8);
+
+         unless ($status)
+         {
+            my $pk3 = "$$config{radio}{prefix}$vid.pk3";
+            move("$$config{radio}{cachedir}/$pk3", "$$config{radio}{pk3webdir}/$pk3");
+
+            # TODO: write radio.cgi and implement an actual queue, radio.qc expects only one line for autofill, duh.
+            #my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
+            my $file = IO::File->new($$config{radio}{queuefile}, '>:encoding(UTF-8)');
+            $file->print("$$config{radio}{url}/$pk3 $vid.ogg $sec $title\n");
+            undef $file;
+
+            rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Successfully added to queue: ' . $title . ' (Playtime: ' . duration($sec) . ')');
+         }
+      },
+   );
 }
