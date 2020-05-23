@@ -1307,6 +1307,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
    }
 
    rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Processing: ' . $title);
+   say localtime(time) . ' ** YouTube: Processing: ' . $title;
 
    $loop->open_process(
       command => [$$config{radio}{youtube_dl}->@*, "https://www.youtube.com/watch?v=$vid"],
