@@ -20,6 +20,7 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
+# - catch SIGINT and wait for radio processes to finish
 # - improve sorting (team secondary for players & team)
 # - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
@@ -88,7 +89,7 @@ my $config = {
 
    radio => {
       enabled     => 1, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
-      youtube_dl  => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings -w -q)],
+      youtube_dl  => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
       yt_api_key  => '',
       tempdir     => "$ENV{HOME}/.xonotic/radiotmp",
       pk3webdir   => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
@@ -1204,7 +1205,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
 
    unless ($choose)
    {
-      my $query  = uri_escape($request);
+      my $query  = uri_escape_utf8($request);
       my $json_s = get("https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=3&type=video&q=$query&key=$$config{radio}{yt_api_key}");
 
       if ($json_s)
@@ -1247,7 +1248,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       {
          delete $$q{search_tmp}{$ip};
          
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . ': Cancelled.');
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . '^7: Cancelled.');
 
          return;
       }
@@ -1263,14 +1264,6 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       $title = $$q{search_tmp}{$ip}{$request}{title};
 
       delete $$q{search_tmp}{$ip};
-   
-      if (-f "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
-      {
-         # TODO: Re-add to queue if not in there...
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Already queued: ' . $title);
-
-         return;
-      }
    }
 
    my $json_v = get("https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=$vid&key=$$config{radio}{yt_api_key}");
@@ -1298,6 +1291,18 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
    else
    {
       rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying details ' . "\N{U+1F61E}");
+      return;
+   }
+   
+   if (-f "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
+   {
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Queueing existing track: ' . $title);
+
+      my $pk3  = "$$config{radio}{prefix}$vid.pk3";
+      my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
+      $file->print("$$config{radio}{url}/$pk3 $vid.ogg $sec $title\n");
+      undef $file;
+
       return;
    }
 
@@ -1338,13 +1343,12 @@ sub radioq_ytdl_to_xon ($vid, $sec, $title)
             my $pk3 = "$$config{radio}{prefix}$vid.pk3";
             move("$$config{radio}{tempdir}/$pk3", "$$config{radio}{pk3webdir}/$pk3");
 
-            # TODO: write radio.cgi and implement an actual queue, radio.qc expects only one line for autofill, duh.
-            #my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
-            my $file = IO::File->new($$config{radio}{queuefile}, '>:encoding(UTF-8)');
+            my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
             $file->print("$$config{radio}{url}/$pk3 $vid.ogg $sec $title\n");
             undef $file;
 
             rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Successfully queued: ' . $title . ' (Playtime: ' . duration($sec) . ')');
+            $discord->send_message( $$config{discord}{linkchan}, ':musical_note: `' . $title . '` was added to the :radio: queue' );
          }
          else
          {
