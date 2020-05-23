@@ -10,6 +10,8 @@ Discord <-> Xonotic
   - `!status`
   - `!xonstat <id>`
   - `!rcon <cmd>` (for owner only)
+## Advanced Features
+- Adding tracks from YouTube ingame to SMB Mod Radio (needs `web/radio.cgi`)
 
 ![lol](https://i.imgur.com/n43mzor.png "lol")
 ![scores](https://i.imgur.com/Prg4JeL.png "scores")
