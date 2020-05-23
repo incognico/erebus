@@ -425,7 +425,7 @@ my $xonstream = IO::Async::Socket->new(
                {
                   my $request = $1;
 
-                  $msg = ':musical_note: requests `' . $request . '` to be added to the radio queue';
+                  $msg = ':radio: requests "' . $request . '" to be added to the radio queue';
 
                   radioq_request($1);
                }
