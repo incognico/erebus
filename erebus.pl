@@ -60,7 +60,7 @@ use Unicode::Truncate;
 
 $ua->timeout( 5 );
 
-my $self;
+my ($self, $q);
 
 my $config = {
    remip  => '2a02:c207:3003:5281::1',     # IP or hostname of the Xonotic server
@@ -90,7 +90,7 @@ my $config = {
       enabled     => 1, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
       youtube_dl  => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings -w -q)],
       yt_api_key  => '',
-      cachedir    => "$ENV{HOME}/.xonotic/radiocache",
+      tempdir     => "$ENV{HOME}/.xonotic/radiotmp",
       pk3webdir   => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
       queuefile   => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio/queue.txt',
       url         => 'http://distfiles.lifeisabug.com/xonotic/radio',
@@ -105,13 +105,15 @@ my $config = {
 if ($$config{radio}{enabled})
 {
    push ($$config{radio}{youtube_dl}->@*, '-o');
-   push ($$config{radio}{youtube_dl}->@*, $$config{radio}{cachedir} . '/%(id)s.%(ext)s');
+   push ($$config{radio}{youtube_dl}->@*, $$config{radio}{tempdir} . '/%(id)s.%(ext)s');
 
    require IO::Async::Process;
    require URI::Escape;
+   require HTML::Entities;
    require File::Copy;
    IO::Async::Process->import;
    URI::Escape->import;
+   HTML::Entities->import;
    File::Copy->import;
 }
 
@@ -421,13 +423,20 @@ my $xonstream = IO::Async::Socket->new(
             {
                $msg = $info[2];
 
-               if ($msg =~ /$$config{radio}{xoncmd_re}/)
+               if ($$config{radio}{enabled} && defined $$players{$info[1]}{ip})
                {
-                  my $request = $1;
+                  if ($msg =~ /$$config{radio}{xoncmd_re}/)
+                  {
+                     radioq_request($1, $$players{$info[1]}{ip}, $$players{$info[1]}{name});
 
-                  $msg = ':radio: requests "' . $request . '" to be added to the radio queue';
+                     next;
+                  }
+                  elsif ($msg ~~ ['1','2','3','0'] && defined $$q{search_tmp}{$$players{$info[1]}{ip}})
+                  {
+                     radioq_request($msg, $$players{$info[1]}{ip}, $$players{$info[1]}{name}, 1);
 
-                  radioq_request($1);
+                     next;
+                  }
                }
             }
             when ( 'chat_spec' )
@@ -1189,49 +1198,90 @@ sub duration ($sec, $nos = 0)
           ($gmt[0] ? ($gmt[7] || $gmt[2] || $gmt[1] ? ($nos ? "\N{U+200E}" : ' ') : '').$gmt[0].'s' : '');
 }
 
-sub radioq_request ($request)
+sub radioq_request ($request, $ip, $name, $choose = 0)
 {
    my ($search, $details, $vid, $title, $sec);
 
-   my $query  = uri_escape($request);
-   my $json_s = get("https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=$query&key=$$config{radio}{yt_api_key}");
+   unless ($choose)
+   {
+      my $query  = uri_escape($request);
+      my $json_s = get("https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=3&type=video&q=$query&key=$$config{radio}{yt_api_key}");
 
-   if ($json_s)
-   {
-      $search = decode_json($json_s);
-   }
-   else
-   {
-      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube search API');
-      return;
-   }
-
-   if (scalar $$search{items}->@* > 0)
-   {
-      $vid    = $$search{items}[0]{id}{videoId};
-      $title  = rconquote($$search{items}[0]{snippet}{title});
-   
-      if (-f "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
+      if ($json_s)
       {
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Already queued: ' . $title);
-         return;
-      }
-
-      my $json_v = get("https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=$vid&key=$$config{radio}{yt_api_key}");
-
-      if ($json_v)
-      {
-         $details = decode_json($json_v);
+         $search = decode_json($json_s);
       }
       else
       {
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube video API');
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube search API ' . "\N{U+1F61E}");
+
+         return;
+      }
+
+      if (scalar $$search{items}->@* > 0)
+      {
+         my $results = 'sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . '^7: Choose by saying the number:';
+
+         for (0..$$search{items}->$#*)
+         {
+            $$q{search_tmp}{$ip}{$_+1}{vid}   = $$search{items}[$_]{id}{videoId};
+            $$q{search_tmp}{$ip}{$_+1}{title} = rconquote(decode_entities($$search{items}[$_]{snippet}{title}));
+            
+            $results .= (' ^0[^1' . ($_+1) . '^0] ^7' . truncate_egc($$q{search_tmp}{$ip}{$_+1}{title}, 64));
+         }
+
+         rcon($results);
+
+         return;
+      }
+      else
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Nothing found for ' . rconquote($request) . " \N{U+1F61E}");
+
          return;
       }
    }
    else
    {
-      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7No videos found :(');
+      unless ($request)
+      {
+         delete $$q{search_tmp}{$ip};
+         
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . ': Cancelled.');
+
+         return;
+      }
+
+      unless (defined $$q{search_tmp}{$ip}{$request})
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7No such ID: ^0[^1' . $request . '^0]');
+
+         return;
+      }
+
+      $vid   = $$q{search_tmp}{$ip}{$request}{vid};
+      $title = $$q{search_tmp}{$ip}{$request}{title};
+
+      delete $$q{search_tmp}{$ip};
+   
+      if (-f "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
+      {
+         # TODO: Re-add to queue if not in there...
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Already queued: ' . $title);
+
+         return;
+      }
+   }
+
+   my $json_v = get("https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=$vid&key=$$config{radio}{yt_api_key}");
+
+   if ($json_v)
+   {
+      $details = decode_json($json_v);
+   }
+   else
+   {
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube details API ' . "\N{U+1F61E}");
       return;
    }
 
@@ -1241,37 +1291,20 @@ sub radioq_request ($request)
 
       if (!$sec || $sec > 900)
       {
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Video too long. Max. length: 15min :(');
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Track too long. Max. length: 15min');
          return;
       }
    }
    else
    {
-      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying video details.');
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying details ' . "\N{U+1F61E}");
       return;
    }
 
    rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Processing: ' . $title);
 
-   my @ytdl = $$config{radio}{youtube_dl}->@*;
-   push(@ytdl, "https://www.youtube.com/watch?v=$vid");
-
    $loop->open_process(
-      command => [@ytdl],
-
-      on_finish => sub ($process, $exitcode)
-      {
-         my $status = ($exitcode >> 8);
-
-         radioq_ytdl_to_xon($vid, $sec, $title) unless ($status);
-      },
-   );
-}
-
-sub radioq_ytdl_to_xon ($vid, $sec, $title)
-{
-   $loop->open_process(
-      command => ['zip', '-9', '-j', '-q', "$$config{radio}{cachedir}/$$config{radio}{prefix}$vid.pk3", "$$config{radio}{cachedir}/$vid.ogg"],
+      command => [$$config{radio}{youtube_dl}->@*, "https://www.youtube.com/watch?v=$vid"],
 
       on_finish => sub ($process, $exitcode)
       {
@@ -1279,8 +1312,31 @@ sub radioq_ytdl_to_xon ($vid, $sec, $title)
 
          unless ($status)
          {
+            radioq_ytdl_to_xon($vid, $sec, $title);
+         }
+         else
+         {
+            rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error downloading track: ' . $title);
+         }
+      },
+   );
+}
+
+sub radioq_ytdl_to_xon ($vid, $sec, $title)
+{
+   $loop->open_process(
+      command => ['zip', '-9', '-j', '-q', "$$config{radio}{tempdir}/$$config{radio}{prefix}$vid.pk3", "$$config{radio}{tempdir}/$vid.ogg"],
+
+      on_finish => sub ($process, $exitcode)
+      {
+         my $status = ($exitcode >> 8);
+
+         unless ($status)
+         {
+            unlink "$$config{radio}{tempdir}/$vid.ogg";
+
             my $pk3 = "$$config{radio}{prefix}$vid.pk3";
-            move("$$config{radio}{cachedir}/$pk3", "$$config{radio}{pk3webdir}/$pk3");
+            move("$$config{radio}{tempdir}/$pk3", "$$config{radio}{pk3webdir}/$pk3");
 
             # TODO: write radio.cgi and implement an actual queue, radio.qc expects only one line for autofill, duh.
             #my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
@@ -1288,7 +1344,11 @@ sub radioq_ytdl_to_xon ($vid, $sec, $title)
             $file->print("$$config{radio}{url}/$pk3 $vid.ogg $sec $title\n");
             undef $file;
 
-            rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Successfully added to queue: ' . $title . ' (Playtime: ' . duration($sec) . ')');
+            rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Successfully queued: ' . $title . ' (Playtime: ' . duration($sec) . ')');
+         }
+         else
+         {
+            rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error creating pk3 for ' . $title);
          }
       },
    );
