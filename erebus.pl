@@ -543,26 +543,26 @@ my $xonstream = IO::Async::Socket->new(
                   delete $$players{$info[4]}{recordset};
                }
             }
-            when ( 'vote' )
-            {
-               given ( $info[1] )
-               {
-                  when ( 'vcall' )
-                  {
-                     $info[1] = $info[2];
-
-                     $msg = ':ballot_box: called a vote: ' . $info[3];
-                  }
-                  when ( 'vyes' )
-                  {
-                     $discord->send_message( $$config{discord}{linkchan}, ':white_check_mark: `the vote was accepted`' );
-                  }
-                  when ( 'vno' )
-                  {
-                     $discord->send_message( $$config{discord}{linkchan}, ':x: `the vote was denied`' );
-                  }
-               }
-            }
+#            when ( 'vote' )
+#            {
+#               given ( $info[1] )
+#               {
+#                  when ( 'vcall' )
+#                  {
+#                     $info[1] = $info[2];
+#
+#                     $msg = ':ballot_box: called a vote: ' . $info[3];
+#                  }
+#                  when ( 'vyes' )
+#                  {
+#                     $discord->send_message( $$config{discord}{linkchan}, ':white_check_mark: `the vote was accepted`' );
+#                  }
+#                  when ( 'vno' )
+#                  {
+#                     $discord->send_message( $$config{discord}{linkchan}, ':x: `the vote was denied`' );
+#                  }
+#               }
+#            }
             when ( 'scores' )
             {
                $maptime = $info[2];
@@ -1214,7 +1214,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       }
       else
       {
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube search API ' . "\N{U+1F61E}");
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube API (Probably no quota left, try again tomorrow) ' . "\N{U+1F61E}");
 
          return;
       }
@@ -1227,7 +1227,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
          {
             $$q{search_tmp}{$ip}{$_+1}{vid}   = $$search{items}[$_]{id}{videoId};
             $$q{search_tmp}{$ip}{$_+1}{title} = rconquote(decode_entities($$search{items}[$_]{snippet}{title}));
-            
+
             $results .= (' ^0[^1' . ($_+1) . '^0] ^7' . truncate_egc($$q{search_tmp}{$ip}{$_+1}{title}, 64));
          }
 
@@ -1274,7 +1274,8 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
    }
    else
    {
-      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube details API ' . "\N{U+1F61E}");
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube API ' . "\N{U+1F61E}");
+
       return;
    }
 
@@ -1284,17 +1285,19 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
 
       if (!$sec || $sec > 900)
       {
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Track too long. Max. length: 15min');
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Track too long. Max. length: 15min' . "\N{U+1F61E}");
+
          return;
       }
    }
    else
    {
       rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying details ' . "\N{U+1F61E}");
+
       return;
    }
    
-   if (-f "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
+   if (-e "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
    {
       rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Queueing existing track: ' . $title);
 
@@ -1306,8 +1309,8 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       return;
    }
 
-   rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Processing: ' . $title);
    say localtime(time) . ' ** YouTube: Processing: ' . $title;
+   rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Processing: ' . $title);
 
    $loop->open_process(
       command => [$$config{radio}{youtube_dl}->@*, "https://www.youtube.com/watch?v=$vid"],
@@ -1322,10 +1325,13 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
          }
          else
          {
+            say localtime(time) . ' ## YouTube: Error, youtube-dl failed for: ' . $title;
             rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error downloading track: ' . $title);
          }
       },
    );
+
+   return;
 }
 
 sub radioq_ytdl_to_xon ($vid, $sec, $title)
@@ -1348,13 +1354,17 @@ sub radioq_ytdl_to_xon ($vid, $sec, $title)
             $file->print("$$config{radio}{url}/$pk3 $vid.ogg $sec $title\n");
             undef $file;
 
+            say localtime(time) . ' ** YouTube: Finished: ' . $title;
             rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Successfully queued: ' . $title . ' (Playtime: ' . duration($sec) . ')');
             $discord->send_message( $$config{discord}{linkchan}, ':musical_note: `' . $title . '` was added to the :radio: queue' );
          }
          else
          {
+            say localtime(time) . ' ## YouTube: Error, zip failed for: ' . $title;
             rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error creating pk3 for ' . $title);
          }
       },
    );
+
+   return;
 }
