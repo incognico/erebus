@@ -49,7 +49,7 @@ binmode( STDOUT, ":encoding(UTF-8)" );
 #use Data::Dumper;
 use Digest::HMAC;
 use Digest::MD4;
-use Encode::Simple qw(encode_utf8 decode_utf8);
+use Encode::Simple qw(encode_utf8 decode_utf8_lax);
 use IO::Async::Loop::Mojo;
 use IO::Async::Socket;
 use IO::File;
@@ -360,7 +360,7 @@ my $xonstream = IO::Async::Socket->new(
 
       while( $recvbuf =~ s/^(.*?)\R// )
       {
-         my $line = decode_utf8(stripcolors($1));
+         my $line = decode_utf8_lax(stripcolors($1));
 
          next unless (substr($line, 0, 1, '') eq ':');
 
@@ -854,7 +854,7 @@ my $xonstream = IO::Async::Socket->new(
 
          if (defined $msg)
          {
-            return unless (defined $$players{$info[1]}{name});
+            return unless (defined $$players{$info[1]}{name} && defined $$players{$info[1]}{geo});
 
             $msg =~ s/(\s|\R)+/ /gn;
             $msg =~ s/\@+everyone/everyone/g;
@@ -869,7 +869,7 @@ my $xonstream = IO::Async::Socket->new(
             $final =~ s/^/$$config{discord}{partmoji} / if ($$config{discord}{partmoji} && $info[0] eq 'part');
             $final =~ s/^/$$config{discord}{joinmoji} / if ($$config{discord}{joinmoji} && $info[0] eq 'join');
 
-            $discord->send_message( $$config{discord}{linkchan}, ':flag_' . $$players{$info[1]}{geo} . ': ' . $final );
+            $discord->send_message( $$config{discord}{linkchan}, ':flag_' . (defined $$players{$info[1]}{geo} ? $$players{$info[1]}{geo} : 'white') . ': ' . $final );
             say localtime(time) . " -> <$nick> $msg";
          }
 
