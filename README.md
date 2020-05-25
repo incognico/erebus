@@ -15,3 +15,4 @@ Discord <-> Xonotic
 ---
 ![lol](https://i.imgur.com/n43mzor.png "lol")
 ![scores](https://i.imgur.com/Prg4JeL.png "scores")
+[![Video](https://i.imgur.com/bkdsDpu.jpg)](https://www.youtube.com/watch?v=ZO4JE9pNcAk)
