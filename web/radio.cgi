@@ -63,9 +63,9 @@ else
 
 sub print_header ($status = 200)
 {
-	print header(
-		-charset => 'utf-8',
-		-type    => 'text/plain',
-		-status  => $status,
-	);
+   print header(
+      -charset => 'utf-8',
+      -type    => 'text/plain',
+      -status  => $status,
+   );
 }
