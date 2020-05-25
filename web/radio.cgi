@@ -15,6 +15,7 @@ use File::Slurper qw(read_lines write_text);
 use IO::File;
 use Tie::File;
 
+my $radiourl     = 'http://distfiles.lifeisabug.com/xonotic/radio';
 my $radiopath    = '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio';
 my $queuefile    = $radiopath . '/queue.txt';    # new incoming tracks
 my $playlistfile = $radiopath . '/playlist.txt'; # all tracks
@@ -37,21 +38,21 @@ if (scalar @queue > 0)
    undef $out;
 
    print_header();
-   print $current;
+   print $radiourl . '/' . $current;
 }
 else
 {
    my @playlist = read_lines($playlistfile);
-   my $line     = $playlist[int rand @playlist];
+   my $random   = $playlist[int rand @playlist];
 
-   if ($line)
+   if ($random)
    {
       my %uniq;
       @playlist = grep { !$uniq{$_}++ } @playlist;
       write_text($playlistfile, (join "\n", @playlist) . "\n");
 
       print_header();
-      print $line;
+      print $radiourl . '/' . $random;
    }
    else
    {

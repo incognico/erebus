@@ -20,6 +20,7 @@
 #                            // (if you don't know what that is, you aren't)
 
 # TODO:
+# - SQLite for radio? :D:D:D
 # - catch SIGINT and wait for radio processes to finish
 # - improve sorting (team secondary for players & team)
 # - use Text::ANSITable methods for formatting columns?
@@ -36,6 +37,7 @@ use v5.28.0;
 use utf8;
 use strict;
 use warnings;
+use autodie ':all';
 
 use lib '/etc/perl';
 
@@ -89,15 +91,15 @@ my $config = {
    },
 
    radio => {
-      enabled     => 0, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
-      youtube_dl  => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
-      yt_api_key  => '',
-      tempdir     => "$ENV{HOME}/.xonotic/radiotmp",
-      pk3webdir   => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
-      queuefile   => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio/queue.txt',
-      url         => 'http://distfiles.lifeisabug.com/xonotic/radio',
-      prefix      => 'radio-twlz-',
-      xoncmd_re   => qr/!queue (?:add)? ?(.+)/i,
+      enabled      => 0, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
+      youtube_dl   => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
+      yt_api_key   => '',
+      tempdir      => "$ENV{HOME}/.xonotic/radiotmp",
+      pk3webdir    => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
+      queuefile    => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio/queue.txt',
+      playlistfile => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio/playlist.txt',
+      prefix       => 'radio-twlz-',
+      xoncmd_re    => qr/!queue (?:add)? ?(.+)/i,
    },
 };
 # You can also experiment with different table border styles and paddings, Default::csingle with default (1) cell_pad looks nice but uses lots of space and chars
@@ -106,6 +108,8 @@ my $config = {
 
 if ($$config{radio}{enabled})
 {
+   $$q{blocked} = [];
+
    push ($$config{radio}{youtube_dl}->@*, '-o');
    push ($$config{radio}{youtube_dl}->@*, $$config{radio}{tempdir} . '/%(id)s.%(ext)s');
 
@@ -1208,6 +1212,16 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
 
    unless ($choose)
    {
+      my $cooldown = 300;
+
+      if (exists $$q{ts}{$ip} && $$q{ts}{$ip}+$cooldown > time)
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . '^7: Cooldown! Wait ' . duration(($$q{ts}{$ip}+$cooldown)-time) . ' until you can use the queue again.');
+         return;
+      }
+
+      $$q{ts}{$ip} = time;
+
       my $query  = uri_escape_utf8($request);
       my $json_s = get("https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=3&type=video&q=$query&key=$$config{radio}{yt_api_key}");
 
@@ -1218,7 +1232,6 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       else
       {
          rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube API (Probably no quota left, try again tomorrow) ' . "\N{U+1F61E}");
-
          return;
       }
 
@@ -1241,7 +1254,6 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       else
       {
          rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Nothing found for ' . rconquote($request) . " \N{U+1F61E}");
-
          return;
       }
    }
@@ -1250,16 +1262,14 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       unless ($request)
       {
          delete $$q{search_tmp}{$ip};
-         
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . '^7: Cancelled.');
 
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . '^7: Cancelled.');
          return;
       }
 
       unless (defined $$q{search_tmp}{$ip}{$request})
       {
          rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7No such ID: ^0[^1' . $request . '^0]');
-
          return;
       }
 
@@ -1267,6 +1277,57 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       $title = $$q{search_tmp}{$ip}{$request}{title};
 
       delete $$q{search_tmp}{$ip};
+
+      if ($vid ~~ $$q{blocked}->@[0..99])
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Already processed recently: ' . $title);
+         return;
+      }
+      else
+      {
+         unshift($$q{blocked}->@*, $vid);
+      }
+   }
+
+   if (-e "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
+   {
+      my $queuefile = IO::File->new($$config{radio}{queuefile}, '<:encoding(UTF-8)');
+      while(my $line = <$queuefile>)
+      {
+         $line =~ s/\s$vid\.ogg\s(\d+)\s/$sec = $1/eg;
+         last if $sec;
+      }
+      undef $queuefile;
+
+      if ($sec)
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Already queued: ' . $title);
+         return;
+      }
+
+      my $playlistfile = IO::File->new($$config{radio}{playlistfile}, '<:encoding(UTF-8)');
+      while(my $line = <$playlistfile>)
+      {
+         $line =~ s/\s$vid\.ogg\s(\d+)\s/$sec = $1/eg;
+         last if $sec;
+      }
+      undef $playlistfile;
+
+      unless ($sec)
+      {
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Something went horribly wrong');
+         $discord->send_message( $$config{discord}{linkchan}, "<\@$$config{discord}{owner_id}> it happened :/" );
+         return;
+      }
+
+      my $pk3 = "$$config{radio}{prefix}$vid.pk3";
+
+      $queuefile = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
+      $queuefile->print("$pk3 $vid.ogg $sec $title\n");
+      undef $queuefile;
+
+      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Re-Queueing existing track: ' . $title);
+      return;
    }
 
    my $json_v = get("https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=$vid&key=$$config{radio}{yt_api_key}");
@@ -1278,7 +1339,6 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
    else
    {
       rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying YouTube API ' . "\N{U+1F61E}");
-
       return;
    }
 
@@ -1289,26 +1349,12 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       if (!$sec || $sec > 900)
       {
          rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Track too long. Max. length: 15min' . "\N{U+1F61E}");
-
          return;
       }
    }
    else
    {
       rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error querying details ' . "\N{U+1F61E}");
-
-      return;
-   }
-   
-   if (-e "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
-   {
-      rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Queueing existing track: ' . $title);
-
-      my $pk3  = "$$config{radio}{prefix}$vid.pk3";
-      my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
-      $file->print("$$config{radio}{url}/$pk3 $vid.ogg $sec $title\n");
-      undef $file;
-
       return;
    }
 
@@ -1354,7 +1400,7 @@ sub radioq_ytdl_to_xon ($vid, $sec, $title)
             move("$$config{radio}{tempdir}/$pk3", "$$config{radio}{pk3webdir}/$pk3");
 
             my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
-            $file->print("$$config{radio}{url}/$pk3 $vid.ogg $sec $title\n");
+            $file->print("$pk3 $vid.ogg $sec $title\n");
             undef $file;
 
             say localtime(time) . ' ** YouTube: Finished: ' . $title;
