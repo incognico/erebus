@@ -68,7 +68,7 @@ my $config = {
    port   => 26660,                        # Port of the Xonotic Server, local port = this + 444 (log_dest_udp port)
    locip  => undef,                        # Local IP, if undef it uses $remip (log_dest_udp ip)
    secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
-   smbmod => 1,                            # Set to 1 if server uses SMB modpack, otherwise use 0 and set sv_adminnick "^8DISCORD^3" in server.cfg
+   smbmod => 0,                            # Set to 1 if server uses SMB modpack, otherwise use 0 and set sv_adminnick "^8DISCORD^3" in server.cfg
    pass   => '',                           # rcon_password in server.cfg
    geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
@@ -83,13 +83,13 @@ my $config = {
      nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
      client_id  => ,                   # Discord bot client ID https://discordapp.com/developers/applications/
      owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
-     joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji   if not empty ('') those will be displayed between the country flag
-     partmoji   => '<:gtfo:603609334781313037>',     # Part emoji   and the players nickname when joining or leaving the server
+     joinmoji   => "\N{U+1F44B}", # Join emoji   if not empty ('') those will be displayed between the country flag
+     partmoji   => "\N{U+1F44B}", # Part emoji   and the players nickname when joining or leaving the server
      showvotes  => 0, # Whether to show in-game voting activity in Discord 
    },
 
    radio => {
-      enabled     => 1, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
+      enabled     => 0, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
       youtube_dl  => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
       yt_api_key  => '',
       tempdir     => "$ENV{HOME}/.xonotic/radiotmp",
