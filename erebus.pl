@@ -85,6 +85,7 @@ my $config = {
      owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
      joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji   if not empty ('') those will be displayed between the country flag
      partmoji   => '<:gtfo:603609334781313037>',     # Part emoji   and the players nickname when joining or leaving the server
+     showvotes  => 0, # Whether to show in-game voting activity in Discord 
    },
 
    radio => {
@@ -543,26 +544,28 @@ my $xonstream = IO::Async::Socket->new(
                   delete $$players{$info[4]}{recordset};
                }
             }
-#            when ( 'vote' )
-#            {
-#               given ( $info[1] )
-#               {
-#                  when ( 'vcall' )
-#                  {
-#                     $info[1] = $info[2];
-#
-#                     $msg = ':ballot_box: called a vote: ' . $info[3];
-#                  }
-#                  when ( 'vyes' )
-#                  {
-#                     $discord->send_message( $$config{discord}{linkchan}, ':white_check_mark: `the vote was accepted`' );
-#                  }
-#                  when ( 'vno' )
-#                  {
-#                     $discord->send_message( $$config{discord}{linkchan}, ':x: `the vote was denied`' );
-#                  }
-#               }
-#            }
+            when ( 'vote' )
+            {
+               next unless ($$config{discord}{showvotes});
+
+               given ( $info[1] )
+               {
+                  when ( 'vcall' )
+                  {
+                     $info[1] = $info[2];
+
+                     $msg = ':ballot_box: called a vote: ' . $info[3];
+                  }
+                  when ( 'vyes' )
+                  {
+                     $discord->send_message( $$config{discord}{linkchan}, ':white_check_mark: `the vote was accepted`' );
+                  }
+                  when ( 'vno' )
+                  {
+                     $discord->send_message( $$config{discord}{linkchan}, ':x: `the vote was denied`' );
+                  }
+               }
+            }
             when ( 'scores' )
             {
                $maptime = $info[2];
@@ -1033,12 +1036,12 @@ sub discord_on_message_create ()
                  },
                  {
                     'name'   => 'Kills',
-                    'value'  => $kills,
+                    'value'  => "$kills",
                     'inline' => \1,
                  },
                  {
                     'name'   => 'Deaths',
-                    'value'  => $deaths,
+                    'value'  => "$deaths",
                     'inline' => \1,
                  },
                  {
