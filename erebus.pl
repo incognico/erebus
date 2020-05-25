@@ -76,7 +76,7 @@ my $config = {
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
 
-   status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
+   status_re  => qr/^!status/i,               # regexp for the status command
    xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
    rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 
