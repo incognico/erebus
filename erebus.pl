@@ -49,7 +49,7 @@ binmode( STDOUT, ":encoding(UTF-8)" );
 #use Data::Dumper;
 use Digest::HMAC;
 use Digest::MD4;
-use Encode::Simple qw(encode_utf8 decode_utf8_lax);
+use Encode::Simple qw(encode_utf8 decode_utf8);
 use IO::Async::Loop::Mojo;
 use IO::Async::Socket;
 use IO::File;
@@ -76,7 +76,7 @@ my $config = {
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
 
-   status_re  => qr/^!status/i,               # regexp for the status command
+   status_re  => qr/^!status/i,                     # regexp for the status command
    xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
    rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 
@@ -358,9 +358,9 @@ my $xonstream = IO::Async::Socket->new(
 
       ($recvbuf .= $dgram) =~ s/${qheader}n?//g;
 
-      while( $recvbuf =~ s/^(.*?)\R// )
+      while( $recvbuf =~ s/^(.*?)(\n)// )
       {
-         my $line = decode_utf8_lax(stripcolors($1));
+         my $line = decode_utf8(stripcolors($1));
 
          next unless (substr($line, 0, 1, '') eq ':');
 
