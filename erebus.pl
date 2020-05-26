@@ -358,7 +358,7 @@ my $xonstream = IO::Async::Socket->new(
 
       ($recvbuf .= $dgram) =~ s/${qheader}n?//g;
 
-      while( $recvbuf =~ s/^(.*?)(\n)// )
+      while( $recvbuf =~ s/^(.*?)\n// )
       {
          my $line = decode_utf8(stripcolors($1));
 
