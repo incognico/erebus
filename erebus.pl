@@ -87,7 +87,8 @@ my $config = {
      owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
      joinmoji   => "\N{U+1F44B}", # Join emoji   if not empty ('') those will be displayed between the country flag
      partmoji   => "\N{U+1F44B}", # Part emoji   and the players nickname when joining or leaving the server
-     showvotes  => 0, # Whether to show in-game voting activity in Discord 
+     showvotes  => 0, # Whether to show in-game voting activity in Discord
+     showtchat  => 1, # Whether to show team chat in Discord
    },
 
    radio => {
@@ -95,9 +96,9 @@ my $config = {
       youtube_dl   => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
       yt_api_key   => '',
       tempdir      => "$ENV{HOME}/.xonotic/radiotmp",
-      pk3webdir    => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
-      queuefile    => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio/queue.txt',
-      playlistfile => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio/playlist.txt',
+      webdir       => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
+      queuefile    => 'queue.txt',
+      playlistfile => 'playlist.txt',
       prefix       => 'radio-twlz-',
       xoncmd_re    => qr/!queue (?:add)? ?(.+)/i,
    },
@@ -105,23 +106,6 @@ my $config = {
 # You can also experiment with different table border styles and paddings, Default::csingle with default (1) cell_pad looks nice but uses lots of space and chars
 # As soon as it warps it looks off in discord. To get as tight as possible use Default::singlei_utf8, cell_pad 0 and extend the $shortnames hash even more.
 # cell_pad 0 breaks even more on wrapping but does not wrap so often, it really needs to be played around with.
-
-if ($$config{radio}{enabled})
-{
-   $$q{blocked} = [];
-
-   push ($$config{radio}{youtube_dl}->@*, '-o');
-   push ($$config{radio}{youtube_dl}->@*, $$config{radio}{tempdir} . '/%(id)s.%(ext)s');
-
-   require IO::Async::Process;
-   require URI::Escape;
-   require HTML::Entities;
-   require File::Copy;
-   IO::Async::Process->import;
-   URI::Escape->import;
-   HTML::Entities->import;
-   File::Copy->import;
-}
 
 my $discord = Mojo::Discord->new(
    'version'   => 9999,
@@ -335,6 +319,26 @@ my $qheader = "\377\377\377\377";
 
 ###
 
+if ($$config{radio}{enabled})
+{
+   $$q{blocked} = [];
+
+   $$config{radio}{queuefile}    = $$config{radio}{webdir} . '/' . $$config{radio}{queuefile};
+   $$config{radio}{playlistfile} = $$config{radio}{webdir} . '/' . $$config{radio}{playlistfile};
+
+   push ($$config{radio}{youtube_dl}->@*, '-o');
+   push ($$config{radio}{youtube_dl}->@*, $$config{radio}{tempdir} . '/%(id)s.%(ext)s');
+
+   require File::Copy;
+   require HTML::Entities;
+   require IO::Async::Process;
+   require URI::Escape;
+   File::Copy->import;
+   HTML::Entities->import;
+   IO::Async::Process->import;
+   URI::Escape->import;
+}
+
 my $gi = MaxMind::DB::Reader->new(file => $$config{'geo'});
 
 discord_on_ready();
@@ -451,8 +455,7 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'chat_team' )
             {
-               #next;
-               $msg = "($$teams{$info[2]}{color}) $info[3]";
+               $msg = "($$teams{$info[2]}{color}) $info[3]" if $$config{discord}{showtchat};
             }
             when ( 'name' )
             {
@@ -1289,7 +1292,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       }
    }
 
-   if (-e "$$config{radio}{pk3webdir}/$$config{radio}{prefix}$vid.pk3")
+   if (-e "$$config{radio}{webdir}/$$config{radio}{prefix}$vid.pk3")
    {
       my $queuefile = IO::File->new($$config{radio}{queuefile}, '<:encoding(UTF-8)');
       while(my $line = <$queuefile>)
@@ -1315,8 +1318,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
 
       unless ($sec)
       {
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Something went horribly wrong');
-         $discord->send_message( $$config{discord}{linkchan}, "<\@$$config{discord}{owner_id}> it happened :/" );
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error getting playtime from playlistfile' . "\N{U+1F61E}");
          return;
       }
 
@@ -1397,7 +1399,7 @@ sub radioq_ytdl_to_xon ($vid, $sec, $title)
             unlink "$$config{radio}{tempdir}/$vid.ogg";
 
             my $pk3 = "$$config{radio}{prefix}$vid.pk3";
-            move("$$config{radio}{tempdir}/$pk3", "$$config{radio}{pk3webdir}/$pk3");
+            move("$$config{radio}{tempdir}/$pk3", "$$config{radio}{webdir}/$pk3");
 
             my $file = IO::File->new($$config{radio}{queuefile}, '>>:encoding(UTF-8)');
             $file->print("$pk3 $vid.ogg $sec $title\n");
