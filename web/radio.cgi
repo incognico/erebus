@@ -9,7 +9,9 @@ use warnings;
 use feature 'signatures';
 no warnings qw(experimental::signatures experimental::smartmatch);
 
-use CGI qw(header remote_host param -utf8);
+binmode( STDOUT, ":encoding(UTF-8)" );
+
+use CGI qw(header remote_host user_agent -utf8);
 use CGI::Carp qw(fatalsToBrowser warningsToBrowser);
 use File::Slurper qw(read_lines write_text);
 use IO::File;
@@ -19,12 +21,9 @@ my $radiourl     = 'http://distfiles.lifeisabug.com/xonotic/radio';
 my $radiopath    = '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio';
 my $queuefile    = $radiopath . '/queue.txt';    # new incoming tracks
 my $playlistfile = $radiopath . '/playlist.txt'; # all tracks
-my $not_secret   = '';
 my $allowed      = '';
 
-my $remote = remote_host();
-
-unless (param('not_secret') eq $not_secret && $remote eq $allowed)
+unless (user_agent() =~ /^Xonotic / && remote_host() eq $allowed)
 {
    print_header(404);
    exit;
