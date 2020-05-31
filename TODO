@@ -10,3 +10,4 @@
     and possibly fall back to method 1 if $challange_timeout is exceeded
   - for now it is fine as Xonotic defaults to rcon_secure 1 anyways
 - use nick if available in mention translation (discord2rcon), same for Gus
+- retry socket connection to xonotic if it was gone (Cannot send data to a Socket with no write_handle)

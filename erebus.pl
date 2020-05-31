@@ -317,7 +317,6 @@ require Weather::METNO if ($$config{weather});
 
 if ($$config{radio}{enabled})
 {
-
    $$q{blocked} = [];
 
    $$config{radio}{queuefile}    = $$config{radio}{webdir} . '/' . $$config{radio}{queuefile};
