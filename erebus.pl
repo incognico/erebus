@@ -81,11 +81,11 @@ my $config = {
      showtchat  => 1, # Whether to show team chat in Discord
    },
 
-   # This is all optional and made for the twilightzone server, just set enabled to 0 and ignore it
+   # This is all optional and made for the twilightzone server, just set weather and enabled to 0 and ignore it
    weather => 0,
    radio => {
       enabled      => 0,
-      youtube_dl   => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
+      youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings --prefer-ffmpeg --postprocessor-args), '-filter:a loudnorm'],
       yt_api_key   => '',
       tempdir      => "$ENV{HOME}/.xonotic/radiotmp",
       webdir       => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
@@ -1368,7 +1368,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
    rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Processing: ' . $title);
 
    $loop->open_process(
-      command => [$$config{radio}{youtube_dl}->@*, "https://www.youtube.com/watch?v=$vid"],
+      command => [$$config{radio}{youtube_dl}->@*, 'https://www.youtube.com/watch?v='.$vid],
 
       on_finish => sub ($process, $exitcode)
       {
