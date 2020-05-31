@@ -1,0 +1,12 @@
+- SQLite for radio? :D:D:D
+- catch SIGINT and wait for async processes to finish before exiting (IO::Async::Process::GracefulShutdown)
+- improve sorting (team secondary for players & team)
+- use Text::ANSITable methods for formatting columns?
+- the rcon_secure 2 challenge stuff can be improved a lot
+  - make use of IO::Async for this and get rid of @cmdqueue
+  - add a $challange_timeout variable
+  - maybe save the challenge and only request a new one if needed
+  - when it is good enough, remove $$config{secure} and always use this method
+    and possibly fall back to method 1 if $challange_timeout is exceeded
+  - for now it is fine as Xonotic defaults to rcon_secure 1 anyways
+- use nick if available in mention translation (discord2rcon), same for Gus

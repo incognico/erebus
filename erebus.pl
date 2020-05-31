@@ -14,24 +14,13 @@
 # sv_eventlog 1
 # sv_eventlog_ipv6_delimiter 1
 # rcon_secure 1 // or 2
-# rcon_restricted_password "<user:pass>"
-# rcon_restricted_commands "${rcon_restricted_commands} say "sv_cmd ircmsg""
+# rcon_password "<pass>"
 # sv_adminnick "^8DISCORD^3" // If the server is not using SMB modpack
 #                            // (if you don't know what that is, you aren't)
 # sv_logscores_bots 1 // if you want
 
-# TODO:
-# - SQLite for radio? :D:D:D
-# - catch SIGINT and wait for async processes to finish before exiting
-# - improve sorting (team secondary for players & team)
-# - use Text::ANSITable methods for formatting columns?
-# - the rcon_secure 2 challenge stuff can be improved a lot
-#   - make use of IO::Async for this and get rid of @cmdqueue
-#   - add a $challange_timeout variable
-#   - maybe save the challenge and only request a new one if needed
-#   - when it is good enough, remove $$config{secure} and always use this method
-#     and possibly fall back to method 1 if $challange_timeout is exceeded
-#   - for now it is fine as Xonotic defaults to rcon_secure 1 anyways
+# Note that rcon_restricted_password can be used only when smbmod is 0
+# and "say" is added to rcon_restricted_commands.
 
 use v5.28.0;
 
@@ -72,7 +61,7 @@ my $config = {
    locip  => undef,                        # Local IP, if undef it uses $remip (log_dest_udp ip)
    secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
    smbmod => 0,                            # Set to 1 if server uses SMB modpack, otherwise use 0 and set sv_adminnick "^8DISCORD^3" in server.cfg
-   pass   => '',                           # user:pass pair of rcon_restricted_password in server.cfg
+   pass   => '',                           # rcon_password in server.cfg
    geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
@@ -93,6 +82,7 @@ my $config = {
    },
 
    # This is all optional and made for the twilightzone server, just set enabled to 0 and ignore it
+   weather => 0,
    radio => {
       enabled      => 0,
       youtube_dl   => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
@@ -321,8 +311,13 @@ my $qheader = "\377\377\377\377";
 
 ###
 
+die('SMB modpack is required for the configured feature set.') if (($$config{weather} || $$config{radio}{enabled}) && !$$config{smbmod});
+
+require Weather::METNO if ($$config{weather});
+
 if ($$config{radio}{enabled})
 {
+
    $$q{blocked} = [];
 
    $$config{radio}{queuefile}    = $$config{radio}{webdir} . '/' . $$config{radio}{queuefile};
@@ -337,7 +332,6 @@ if ($$config{radio}{enabled})
    require URI::Escape;
    File::Copy->import;
    HTML::Entities->import;
-   IO::Async::Process->import;
    URI::Escape->import;
 }
 
@@ -405,7 +399,17 @@ my $xonstream = IO::Async::Socket->new(
                unless ($info[3] eq 'bot')
                {
                   my $r = $gi->record_for_address($$players{$info[1]}{ip});
+
                   $$players{$info[1]}{geo} = $r->{country}{iso_code} ? lc($r->{country}{iso_code}) : 'white';
+
+                  if ($$config{weather})
+                  {
+                     return if (exists $$q{weather}{$$players{$info[1]}{ip}} && $$q{weather}{$$players{$info[1]}{ip}}+10800 > time);
+
+                     my $w = Weather::METNO->new(lat => $r->{location}{latitude}, lon => $r->{location}{longitude}, uid => '<nico@lifeisabug.com>');
+                     rcon(sprintf('defer 6 "tell #%u ^6Welcome^7, %s^6!^7 Your local ^5weather^7 forecast: ^5%.1f°C ^7/^5 %.1f°F ^8:: ^5%s ^8::^7 Cld: %u%% ^8::^7 Hum: %u%% ^8::^7 Fog: %u%% ^8::^7 UVI: %.3g ^8::^7 Wind: ^5%s^7 from %s"', $info[2], rconquote($info[4]), $w->temp_c, $w->temp_f, $w->symbol_txt, $w->cloudiness, $w->humidity, $w->foginess, $w->uvindex, $w->windspeed_bft_txt, $w->windfrom_dir));
+                     $$q{weather}{$$players{$info[1]}{ip}} = time;
+                  }
 
                   $msg = 'has joined the game' unless ($info[1] ~~ @lastplayers);
                }
@@ -945,7 +949,6 @@ sub discord_on_message_create ()
 
             my $nick = defined $nickname ? $nickname : $username;
 
-            # TODO: use nick here too if available:
             $msg =~ s/`//g;
             if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
             {
@@ -1146,7 +1149,7 @@ sub rcon ($line)
    }
    else
    {
-      say 'WARNING: Using plain text rcon_restricted_password, consider using rcon_secure >= 1';
+      say 'WARNING: Using plain text rcon_password, consider using rcon_secure >= 1';
       $xonstream->send($qheader."rcon $$config{pass} $line");
    }
 
@@ -1163,7 +1166,7 @@ sub chall_recvd ($c)
    return;
 }
 
-sub qfont_decode ($qstr, $ascii = 0)
+sub qfont_decode ($qstr = '', $ascii = 0)
 {
    my @chars;
 
