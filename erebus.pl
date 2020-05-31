@@ -370,7 +370,6 @@ my $xonstream = IO::Async::Socket->new(
             join      => 5,
             name      => 3,
             player    => 7,
-            stupidworkaround => 2,
          };
 
          my @info = (split /:/, $line, $$fields{($line =~ /^([^:]*)/)[0]} || -1);
@@ -382,13 +381,6 @@ my $xonstream = IO::Async::Socket->new(
 
          given ( $info[0] )
          {
-            when ( 'stupidworkaround' )
-            {
-               ($bots, $players, $teamplay, $matchid, @lastplayers) = (0, {}, 0, 'none', ());
-
-               $map = $info[1] if $info[1];
-               $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } ) if ($type && $map);
-            }
             when ( 'join' )
             {
                 $$players{$info[1]}{slot} = $info[2];
