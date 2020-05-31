@@ -13,15 +13,16 @@
 # log_dest_udp "<locip:port>"
 # sv_eventlog 1
 # sv_eventlog_ipv6_delimiter 1
-# sv_logscores_bots 1 // if you want
 # rcon_secure 1 // or 2
-# rcon_password <pass>
+# rcon_restricted_password "<user:pass>"
+# rcon_restricted_commands "${rcon_restricted_commands} say "sv_cmd ircmsg""
 # sv_adminnick "^8DISCORD^3" // If the server is not using SMB modpack
 #                            // (if you don't know what that is, you aren't)
+# sv_logscores_bots 1 // if you want
 
 # TODO:
 # - SQLite for radio? :D:D:D
-# - catch SIGINT and wait for radio processes to finish
+# - catch SIGINT and wait for async processes to finish before exiting
 # - improve sorting (team secondary for players & team)
 # - use Text::ANSITable methods for formatting columns?
 # - the rcon_secure 2 challenge stuff can be improved a lot
@@ -61,7 +62,7 @@ use Text::ANSITable;
 use Unicode::Homoglyph::Replace 'replace_homoglyphs';
 use Unicode::Truncate;
 
-$ua->timeout( 5 );
+$ua->timeout( 3 );
 
 my ($self, $q);
 
@@ -71,7 +72,7 @@ my $config = {
    locip  => undef,                        # Local IP, if undef it uses $remip (log_dest_udp ip)
    secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
    smbmod => 0,                            # Set to 1 if server uses SMB modpack, otherwise use 0 and set sv_adminnick "^8DISCORD^3" in server.cfg
-   pass   => '',                           # rcon_password in server.cfg
+   pass   => '',                           # user:pass pair of rcon_restricted_password in server.cfg
    geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
@@ -91,8 +92,9 @@ my $config = {
      showtchat  => 1, # Whether to show team chat in Discord
    },
 
+   # This is all optional and made for the twilightzone server, just set enabled to 0 and ignore it
    radio => {
-      enabled      => 0, # This enables adding songs in-game from YouTube to the SMB modpack radio queue, requires youtube-dl, ffmpeg, zip, etc. Just set it to 0 ;)
+      enabled      => 0,
       youtube_dl   => [qw(/usr/bin/youtube-dl -f bestaudio/best[height<=480] -x --audio-format vorbis --audio-quality 0 --no-mtime --no-warnings -w -q)],
       yt_api_key   => '',
       tempdir      => "$ENV{HOME}/.xonotic/radiotmp",
@@ -1144,7 +1146,7 @@ sub rcon ($line)
    }
    else
    {
-      say 'WARNING: Using plain text rcon_password, consider using rcon_secure >= 1';
+      say 'WARNING: Using plain text rcon_restricted_password, consider using rcon_secure >= 1';
       $xonstream->send($qheader."rcon $$config{pass} $line");
    }
 
@@ -1215,7 +1217,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
 
    unless ($choose)
    {
-      my $cooldown = 300;
+      my $cooldown = 240;
 
       if (exists $$q{ts}{$ip} && $$q{ts}{$ip}+$cooldown > time)
       {
