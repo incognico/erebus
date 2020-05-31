@@ -85,7 +85,7 @@ my $config = {
    weather => 0,
    radio => {
       enabled      => 1,
-      youtube_dl   => [qw(/usr/bin/youtube-dl -v -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg --postprocessor-args), '-af dynaudnorm'],
+      youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg --postprocessor-args), '-af dynaudnorm'],
       yt_api_key   => '',
       tempdir      => "$ENV{HOME}/.xonotic/radiotmp",
       webdir       => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
