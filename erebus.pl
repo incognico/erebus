@@ -103,7 +103,6 @@ my $discord = Mojo::Discord->new(
    'version'   => 9999,
    'url'       => 'https://xonotic.lifeisabug.com',
    'token'     => '', # Discord bot secret token https://discordapp.com/developers/applications/
-   'name'      => 'Erebus',
    'reconnect' => 1,
    'verbose'   => 0,
    'logdir'    => "$ENV{HOME}/.xonotic/erebus",
@@ -577,7 +576,7 @@ my $xonstream = IO::Async::Socket->new(
                if ($info[1] =~ /^([a-z]+)_(.+)$/)
                {
                   ($type, $map) = (uc($1), $2);
-                  $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } );
+                  #$discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } );
                }
             }
             when ( 'labels' )
@@ -848,7 +847,7 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'gameover' )
             {
                ($teamplay, $matchid) = (0, 'none');
-               $discord->status_update( { name => 'Xonotic', type => 0 } );
+               #$discord->status_update( { name => 'Xonotic', type => 0 } );
             }
          }
 
@@ -1184,8 +1183,8 @@ sub rconquote ($str)
 {
    $str =~ s/[\000-\037|\377]//g;
    $str =~ s/(\R|\s)+/ /gn;
-   $str =~ s/\^/\^\^/g;
    $str = stripcolors($str);
+   $str =~ s/\^/\^\^/g;
    $str = replace_homoglyphs($str);
 
    return $str;
