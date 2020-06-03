@@ -179,23 +179,24 @@ my $modes = {
 };
 
 my $shortnames = {
-   'BCKILLS'   => 'BCK',
-   'DEATHS'    => 'DTHS',
-   'DESTROYED' => 'DSTRD',
-   'DMG'       => 'DMG+',
-   'DMGTAKEN'  => 'DMG-',
-   'DROPS'     => 'DRPS',
-   'FCKILLS'   => 'FCK',
-   'KCKILLS'   => 'KCK',
-   'KILLS'     => 'KLLS',
-   'PICKUPS'   => 'PUPS',
-   'PUSHES'    => 'PSHS',
-   'RETURNS'   => 'RETS',
-   'REVIVALS'  => 'REVS',
-   'SCORE'     => 'SCRE',
-   'SUICIDES'  => 'SK',
-   'TEAM'      => 'T',
-   'TEAMKILLS' => 'TK',
+   'BCKILLS'    => 'BCK',
+   #'DEATHS'     => 'DTHS',
+   'DESTROYED'  => 'DSTRYD',
+   'DMG'        => 'DMG+',
+   'DMGTAKEN'   => 'DMG-',
+   'DROPS'      => 'DRPS',
+   'FCKILLS'    => 'FCK',
+   'KCKILLS'    => 'KCK',
+   #'KILLS'      => 'KLLS',
+   'OBJECTIVES '=> 'OBJ'
+   'PICKUPS'    => 'PUPS',
+   'PUSHES'     => 'PSHS',
+   'RETURNS'    => 'RETS',
+   'REVIVALS'   => 'REVS',
+   'SCORE'      => 'SCRE',
+   'SUICIDES'   => 'SK',
+   'TEAM'       => 'T',
+   'TEAMKILLS'  => 'TK',
 };
 
 my $discord_char_limit = 1980; # -20
