@@ -947,7 +947,7 @@ sub discord_on_message_create ()
             }
             $msg =~ s/<#(\d+)>/#$self->{'channelnames'}->{$1}/g; # channel
             $msg =~ s/<@&(\d+)>/\@$self->{'rolenames'}->{$1}/g; # role
-            $msg =~ s/<a?(:.+:)\d+>/$1/g; # emoji
+            $msg =~ s/<a?(:[^:.]+:)\d+>/$1/g; # emoji
 
             return unless $msg;
 
