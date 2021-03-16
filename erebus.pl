@@ -202,7 +202,7 @@ my $shortnames = {
 my $discord_char_limit = 1980; # -20
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
-my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||__|\*|~|>)/;
+my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||_|\*|~|>)/;
 
 my @qfont_unicode_glyphs = (
    "\N{U+0020}",     "\N{U+0020}",     "\N{U+2014}",     "\N{U+0020}",
