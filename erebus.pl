@@ -209,7 +209,7 @@ my $shortnames = {
 my $discord_char_limit = 1980; # -20
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
-my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||__|\*|~|>)/;
+my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||_|\*|~|>)/;
 
 my @qfont_unicode_glyphs = (
    "\N{U+0020}",     "\N{U+0020}",     "\N{U+2014}",     "\N{U+0020}",
@@ -792,10 +792,10 @@ my $xonstream = IO::Async::Socket->new(
                         {
                            push(@row, sprintf('%.2fk', $$pscores{$id}{$_}/1000));
                         }
-                        when ( 'ELO' )
-                        {
-                           push(@row, $$pscores{$id}{$_} <= 0 ? '-' : int($$pscores{$id}{$_}));
-                        }
+                        #when ( 'ELO' )
+                        #{
+                        #   push(@row, $$pscores{$id}{$_} <= 0 ? '-' : int($$pscores{$id}{$_}));
+                        #}
                         when ( 'FPS' )
                         {
                            push(@row, $$pscores{$id}{$_} ? $$pscores{$id}{$_} : '-');
@@ -808,7 +808,7 @@ my $xonstream = IO::Async::Socket->new(
                   }
 
                   # more correct but breaks table formatting in discord when wrapping
-                  #for (qw(BCTIME CAPTIME DMG DMGTAKEN DMG+ DMG- ELO FASTEST FPS SCORE))
+                  #for (qw(BCTIME CAPTIME DMG DMGTAKEN DMG+ DMG- FASTEST FPS SCORE))
                   #{
                   #   $t->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
                   #}
@@ -1342,6 +1342,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       undef $queuefile;
 
       rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Re-Queueing existing track: ' . $title);
+      $discord->send_message( $$config{discord}{linkchan}, ':musical_note: `' . $title . '` was added to the :radio: queue' );
       return;
    }
 
