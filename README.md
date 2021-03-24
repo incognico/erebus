@@ -24,5 +24,9 @@ Then, only use the aliases via rcon.
 
 ---
 ![lol](https://i.imgur.com/n43mzor.png "lol")
+![channel](https://i.imgur.com/MscLAKB.png "channel")
 ![scores](https://i.imgur.com/Prg4JeL.png "scores")
+
+Bonus, the live YouTube song queuing for the radio mod:
+
 [![Video](https://i.imgur.com/bkdsDpu.jpg)](https://www.youtube.com/watch?v=ZO4JE9pNcAk)
