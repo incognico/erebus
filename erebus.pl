@@ -688,7 +688,7 @@ my $xonstream = IO::Async::Socket->new(
                $heading   .= ' <<<';
 
                my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8'); # cell_pad => $teamplay ? 0 : 1
-               my @cols  = grep { length && !/^FPS$/ } @pscorelabels;
+               my @cols  = grep { length && !/^(FPS|ELO)$/ } @pscorelabels;
 
                if ($teamplay)
                {
@@ -773,7 +773,7 @@ my $xonstream = IO::Async::Socket->new(
                      {
                         when ( /SCO?RE/ )
                         {
-                           # server reported score in CA = float, Xonotic "bug"
+                           # server reported score in CA = float (actually damage dealt), Xonotic "bug"
                            push(@row, int($$pscores{$id}{$_}));
                         }
                         when ( /^T(EAM)?$/n )
@@ -792,10 +792,10 @@ my $xonstream = IO::Async::Socket->new(
                         {
                            push(@row, sprintf('%.2fk', $$pscores{$id}{$_}/1000));
                         }
-                        #when ( 'ELO' )
-                        #{
-                        #   push(@row, $$pscores{$id}{$_} <= 0 ? '-' : int($$pscores{$id}{$_}));
-                        #}
+                        when ( 'ELO' )
+                        {
+                           push(@row, $$pscores{$id}{$_} <= 0 ? '-' : int($$pscores{$id}{$_}));
+                        }
                         when ( 'FPS' )
                         {
                            push(@row, $$pscores{$id}{$_} ? $$pscores{$id}{$_} : '-');
@@ -808,7 +808,7 @@ my $xonstream = IO::Async::Socket->new(
                   }
 
                   # more correct but breaks table formatting in discord when wrapping
-                  #for (qw(BCTIME CAPTIME DMG DMGTAKEN DMG+ DMG- FASTEST FPS SCORE))
+                  #for (qw(BCTIME CAPTIME DMG DMGTAKEN DMG+ DMG- ELO FASTEST FPS SCORE))
                   #{
                   #   $t->set_column_style($_ => type => 'num') if ($_ ~~ @cols);
                   #}
