@@ -1263,6 +1263,8 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
             $results .= (' ^0[^1' . ($_+1) . '^0] ^7' . truncate_egc($$q{search_tmp}{$ip}{$_+1}{title}, 64));
          }
 
+         $results .= ' ^0[^10^0] ^7None/Cancel';
+
          rcon($results);
 
          return;
@@ -1279,7 +1281,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
       {
          delete $$q{search_tmp}{$ip};
 
-         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . '^7: Cancelled.');
+         rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^3' . rconquote($name) . '^7: Canceled.');
          return;
       }
 
