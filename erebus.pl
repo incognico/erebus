@@ -4,9 +4,9 @@
 #          Links a Xonotic server with a discord channel
 #          In contrast to rcon2irc.pl this just links chats
 #
-# Requires https://github.com/vsTerminus/Mojo-Discord (release v3+)
+# Requires https://github.com/vsTerminus/Mojo-Discord
 #
-# Copyright 2020, Nico R. Wohlgemuth <nico@lifeisabug.com>
+# Copyright 2020-2021, Nico R. Wohlgemuth <nico@lifeisabug.com>
 
 # Xonotic server.cfg:
 #
@@ -52,8 +52,9 @@ use Unicode::Homoglyph::Replace 'replace_homoglyphs';
 use Unicode::Truncate;
 
 $ua->timeout( 3 );
+$ua->default_header( 'Accept' => 'application/json' );
 
-my ($self, $q);
+my ($guild, $users, $q);
 
 my $config = {
    remip  => '2a02:c207:3003:5281::1',     # IP or hostname of the Xonotic server
@@ -71,21 +72,27 @@ my $config = {
    rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 
    discord => {
-     linkchan   => 706113584626663475, # The discord channel ID which will link discord and server chats
-     nocmdchans => [458683388887302155, 610862900357234698, 673626913864155187, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
-     client_id  => ,                   # Discord bot client ID https://discordapp.com/developers/applications/
+     linkchan   => 824252953212616704, # The discord channel ID which will link discord and server chats
+     nocmdchans => [706113584626663475, 610862900357234698, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
+
+     client_id  => 706112802137309224, # Discord bot client ID https://discordapp.com/developers/applications/
      owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
-     joinmoji   => "\N{U+1F44B}", # Join emoji   if not empty ('') those will be displayed between the country flag
-     partmoji   => "\N{U+1F44B}", # Part emoji   and the players nickname when joining or leaving the server
+     guild_id   => 458323696910598165, # ID of the discord guild
+
+     joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji   if not empty ('') those will be displayed between the country flag
+     partmoji   => '<:gtfo:603609334781313037>',     # Part emoji   and the players nickname when joining or leaving the server
+
      showvotes  => 0, # Whether to show in-game voting activity in Discord
      showtchat  => 1, # Whether to show team chat in Discord
    },
 
-   # This is all optional and made for the twilightzone server, just set weather and enabled to 0 and ignore it
+   # This is all optional and made for the twilightzone server, just set weather and radio->enabled to 0 and ignore it
    weather => 0,
    radio => {
       enabled      => 1,
-      youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg --postprocessor-args), '-af dynaudnorm'],
+      # for some reason now says ERROR: Filtering and streamcopy cannot be used together.
+      #youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg --postprocessor-args), '-af dynaudnorm'],
+      youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg)],
       yt_api_key   => '',
       tempdir      => "$ENV{HOME}/.xonotic/radiotmp",
       webdir       => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
@@ -202,7 +209,7 @@ my $shortnames = {
 my $discord_char_limit = 1980; # -20
 
 #my $discord_markdown_pattern = qr/(?<!\\)(`|@|:|#|\||__|\*|~|>)/;
-my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||_|\*|~|>)/;
+my $discord_markdown_pattern = qr/(?<!\\)(`|@|#|\||__|\*|~|>)/;
 
 my @qfont_unicode_glyphs = (
    "\N{U+0020}",     "\N{U+0020}",     "\N{U+2014}",     "\N{U+0020}",
@@ -337,6 +344,7 @@ if ($$config{radio}{enabled})
 my $gi = MaxMind::DB::Reader->new(file => $$config{'geo'});
 
 discord_on_ready();
+discord_on_guild_create();
 discord_on_message_create();
 
 $discord->init();
@@ -387,6 +395,8 @@ my $xonstream = IO::Async::Socket->new(
                ($$players{$info[1]}{ip}   = $info[3]) =~ s/_/:/g;
                 $$players{$info[1]}{name} = qfont_decode($info[4]);
 
+               $$players{$info[1]}{name} = $info[4] = 'unnamed' unless $$players{$info[1]}{name};
+
                unless ($info[3] eq 'bot')
                {
                   my $r = $gi->record_for_address($$players{$info[1]}{ip});
@@ -402,7 +412,7 @@ my $xonstream = IO::Async::Socket->new(
                      $$q{weather}{$$players{$info[1]}{ip}} = time;
                   }
 
-                  $msg = 'has joined the game' unless ($info[1] ~~ @lastplayers);
+                  $msg = 'has joined the game' unless ($info[1] ~~ @lastplayers); # filter joins after map change to prevent spam
                }
                else
                {
@@ -856,21 +866,30 @@ my $xonstream = IO::Async::Socket->new(
          {
             return unless (defined $$players{$info[1]}{name} && defined $$players{$info[1]}{geo});
 
+            my $nick = $$players{$info[1]}{name};
+
+            say localtime(time) . " -> <$nick> $msg";
+
+            $nick =~ s/`//g;
+
             $msg =~ s/(\s|\R)+/ /gn;
             $msg =~ s/\@+everyone/everyone/g;
             $msg =~ s/\@+here/here/g;
             $msg =~ s/$discord_markdown_pattern/\\$1/g;
 
-            my $nick = $$players{$info[1]}{name};
-            $nick =~ s/`//g;
+            $msg = '_\*' . substr($msg, length($nick)+1) . '\*_' if ($msg =~ /^\Q$nick\E /);
 
             my $final = "`$nick`  $msg";
 
             $final =~ s/^/$$config{discord}{partmoji} / if ($$config{discord}{partmoji} && $info[0] eq 'part');
             $final =~ s/^/$$config{discord}{joinmoji} / if ($$config{discord}{joinmoji} && $info[0] eq 'join');
 
-            $discord->send_message( $$config{discord}{linkchan}, ':flag_' . (defined $$players{$info[1]}{geo} ? $$players{$info[1]}{geo} : 'white') . ': ' . $final );
-            say localtime(time) . " -> <$nick> $msg";
+            my $message = {
+               content => ':' . (defined $$players{$info[1]}{geo} ? ('flag_' . $$players{$info[1]}{geo}) : 'gay_pride_flag') . ': ' . $final,
+               allowed_mentions => { parse => [] },
+            };
+
+            $discord->send_message( $$config{discord}{linkchan}, $message );
          }
 
          delete $$players{$delaydelete} if (defined $delaydelete);
@@ -898,8 +917,15 @@ sub discord_on_ready ()
    $discord->gw->on('READY' => sub ($gw, $hash)
    {
       add_me($hash->{'user'});
-      $discord->status_update( { 'name' => $$config{'game'}, type => 0 } ) if ( defined $$config{'game'} );
+      $discord->status_update( { 'name' => 'Xonotic', type => 0 } );
    });
+
+   return;
+}
+
+sub discord_on_guild_create ()
+{
+   $discord->gw->on('GUILD_CREATE' => sub ($gw, $hash) { $guild = $discord->get_guild($$config{'discord'}{'guild_id'}); });
 
    return;
 }
@@ -938,20 +964,24 @@ sub discord_on_message_create ()
                return;
             }
 
-            my $nick = defined $nickname ? $nickname : $username;
-
             $msg =~ s/`//g;
-            if ( $msg =~ s/<@!?(\d+)>/\@$self->{'users'}->{$1}->{'username'}/g ) # user/nick
+            if ( $msg =~ s/<@!?(\d+)>/\@$$users{'users'}{$1}{'username'}/g ) # user/nick
             {
-               $msg =~ s/\R^\@$self->{'users'}->{$1}->{'username'}/ >>> /m if ($1 == $self->{'id'}); # quote
+               $msg =~ s/(?:\R^)\@$$users{'users'}{$1}{'username'}/ >>> /m if ($1 == $$users{'id'});
             }
-            $msg =~ s/<#(\d+)>/#$self->{'channelnames'}->{$1}/g; # channel
-            $msg =~ s/<@&(\d+)>/\@$self->{'rolenames'}->{$1}/g; # role
+            $msg =~ s/(\R|\s)+/ /gn;
+            $msg =~ s/<#(\d+)>/#$$guild{'channels'}{$1}{'name'}/g; # channel
+            $msg =~ s/<@&(\d+)>/\@$$guild{'roles'}{$1}{'name'}/g; # role
             $msg =~ s/<a?(:[^:.]+:)\d+>/$1/g; # emoji
 
             return unless $msg;
 
+            my $nick = defined $nickname ? $nickname : $username;
+            $nick =~ s/`//g;
+            $nick =~ s/(\R|\s)+/ /gn;
+
             say localtime(time) . " <- <$nick> $msg";
+
             xonmsg($nick, $msg);
          }
          elsif ( $channel ~~ $$config{discord}{nocmdchans}->@* )
@@ -980,12 +1010,12 @@ sub discord_on_message_create ()
                return;
             }
 
-            my $xonstaturl = 'http://stats.xonotic.org/player/';
-            my $json = get($xonstaturl . $qid . '.json');
+            my $xonstaturl = 'https://stats.xonotic.org/player/';
+            my $json = get($xonstaturl . $qid);
 
             if ($json)
             {
-               $stats = decode_json($json);
+               $stats = decode_json(encode_utf8($json));
             }
             else
             {
@@ -993,21 +1023,23 @@ sub discord_on_message_create ()
                return;
             }
 
-            my $snick   = $$stats[0]{player}{stripped_nick};
-            my $games   = $$stats[0]{games_played}{overall}{games};
-            my $win     = $$stats[0]{games_played}{overall}{wins};
-            my $loss    = $$stats[0]{games_played}{overall}{losses};
-            my $pct     = $$stats[0]{games_played}{overall}{win_pct};
-            my $kills   = $$stats[0]{overall_stats}{overall}{total_kills};
-            my $deaths  = $$stats[0]{overall_stats}{overall}{total_deaths};
-            my $ratio   = $$stats[0]{overall_stats}{overall}{k_d_ratio};
-            my $elo     = $$stats[0]{elos}{overall}{elo} ? $$stats[0]{elos}{overall}{elo}          : 0;
-            my $elot    = $$stats[0]{elos}{overall}{elo} ? $$stats[0]{elos}{overall}{game_type_cd} : 0;
-            my $elog    = $$stats[0]{elos}{overall}{elo} ? $$stats[0]{elos}{overall}{games}        : 0;
-            my $capr    = $$stats[0]{overall_stats}{ctf}{cap_ratio} ? $$stats[0]{overall_stats}{ctf}{cap_ratio} : 0;
-            my $favmap  = $$stats[0]{fav_maps}{overall}{map_name};
-            my $favmapt = $$stats[0]{fav_maps}{overall}{game_type_cd};
-            my $lastp   = $$stats[0]{overall_stats}{overall}{last_played_fuzzy};
+            my $snick   = decode_utf8($$stats{player}{stripped_nick});
+            my $games   = $$stats{games_played}{overall}{games};
+            my $win     = $$stats{games_played}{overall}{wins};
+            my $loss    = $$stats{games_played}{overall}{losses};
+            my $pct     = $$stats{games_played}{overall}{win_pct};
+            my $kills   = $$stats{overall_stats}{overall}{total_kills};
+            my $deaths  = $$stats{overall_stats}{overall}{total_deaths};
+            my $ratio   = $$stats{overall_stats}{overall}{k_d_ratio};
+            #my $elo     = $$stats{elos}{overall}{elo} ? $$stats{elos}{overall}{elo}          : 0;
+            #my $elot    = $$stats{elos}{overall}{elo} ? $$stats{elos}{overall}{game_type_cd} : 0;
+            #my $elog    = $$stats{elos}{overall}{elo} ? $$stats{elos}{overall}{games}        : 0;
+            my $capr    = $$stats{overall_stats}{ctf}{cap_ratio} ? $$stats{overall_stats}{ctf}{cap_ratio} : 0;
+            #my $favmap  = $$stats{fav_maps}{overall}{map_name};
+            #my $favmapt = $$stats{fav_maps}{overall}{game_type_cd};
+            my $lastp   = $$stats{overall_stats}{overall}{last_played_fuzzy};
+            my $joined  = $$stats{player}{joined_fuzzy};
+            #my $active  = $$stats{player}{active_ind} eq JSON->true ? 1 : 0;
 
             my $embed = {
                'color' => '3447003',
@@ -1019,13 +1051,13 @@ sub discord_on_message_create ()
                   'url' => 'https://cdn.discordapp.com/emojis/706283635719929876.png?v=1',
                },
                 'footer' => {
-                   'text' => "Last played: $lastp",
+                   'text' => "First seen: $joined",
                 },
                 'fields' => [
                  {
                     'name'   => 'Name',
                     'value'  => "**[$snick]($xonstaturl$qid)**",
-                    'inline' => \1,
+                    'inline' => \0,
                  },
                  {
                     'name'   => 'Games (W/L)',
@@ -1057,13 +1089,14 @@ sub discord_on_message_create ()
 
             push $$embed{'fields'}->@*, { 'name' => 'CTF Cap Ratio', 'value' => sprintf('%.2f', $capr), 'inline' => \1, } if $capr;
 
-            if ($elo && $elo != 100)
-            {
-               push $$embed{'fields'}->@*, { 'name' => uc($elot) . ' ELO',   'value' => sprintf('%.2f', $elo),  'inline' => \1, };
-               push $$embed{'fields'}->@*, { 'name' => uc($elot) . ' Games', 'value' => $elog,                  'inline' => \1, };
-            }
+            #if ($elo && $elo != 100)
+            #{
+            #   push $$embed{'fields'}->@*, { 'name' => uc($elot) . ' ELO',   'value' => sprintf('%.2f', $elo),  'inline' => \1, };
+            #   push $$embed{'fields'}->@*, { 'name' => uc($elot) . ' Games', 'value' => $elog,                  'inline' => \1, };
+            #}
 
-            push $$embed{'fields'}->@*, { 'name' => 'Favourite Map', 'value' => sprintf('%s (%s)', $favmap, uc($favmapt)), 'inline' => \1, };
+            #push $$embed{'fields'}->@*, { 'name' => 'Favourite Map', 'value' => sprintf('%s (%s)', $favmap, uc($favmapt)), 'inline' => \1, };
+            push $$embed{'fields'}->@*, { 'name' => 'Last played', 'value' => $lastp, 'inline' => \1, };
 
             my $message = {
                'content' => '',
@@ -1080,7 +1113,7 @@ sub discord_on_message_create ()
 
 sub add_me ($user)
 {
-   $self->{'id'} = $user->{'id'};
+   $$users{'id'} = $$user{'id'};
    add_user($user);
 
    return;
@@ -1088,28 +1121,12 @@ sub add_me ($user)
 
 sub add_user ($user)
 {
-   $self->{'users'}{$user->{'id'}} = $user;
+   $$users{'users'}{$$user{'id'}} = $user;
 
    return;
 }
 
-sub add_guild ($guild)
-{
-   $self->{'guilds'}{$guild->{'id'}} = $guild;
-
-   foreach my $channel ($guild->{'channels'}->@*)
-   {
-      $self->{'channels'}{$channel->{'id'}} = $guild->{'id'};
-      $self->{'channelnames'}{$channel->{'id'}} = $channel->{'name'}
-   }
-
-   foreach my $role ($guild->{'roles'}->@*)
-   {
-      $self->{'rolenames'}{$role->{'id'}} = $role->{'name'};
-   }
-
-   return;
-}
+###
 
 sub xonmsg ($nick, $msg)
 {
