@@ -969,6 +969,8 @@ sub discord_on_message_create ()
                return;
             }
 
+            return unless ((keys %$players) >= 1);
+
             $msg =~ s/`//g;
             if ( $msg =~ s/<@!?(\d+)>/\@$$users{'users'}{$1}{'username'}/g ) # user/nick
             {
