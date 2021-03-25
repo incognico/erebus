@@ -54,7 +54,7 @@ use Unicode::Truncate;
 $ua->timeout( 3 );
 $ua->default_header( 'Accept' => 'application/json' );
 
-my ($guild, $users, $q);
+my ($guild, $users, $q, $laststatus);
 
 my $config = {
    remip  => '2a02:c207:3003:5281::1',     # IP or hostname of the Xonotic server
@@ -491,7 +491,11 @@ my $xonstream = IO::Async::Socket->new(
                } 
                elsif ($info[1] eq 'end')
                {
-                  $discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } ) if ($type && $map);
+                  if ($type && $map)
+                  {
+                     $laststatus = ($instagib ? 'i' : '') . "$type on $map";
+                     $discord->status_update( { 'name' => $laststatus, type => 0 } );
+                  }
                }
             }
             when ( 'startdelay_ended' )
@@ -584,11 +588,7 @@ my $xonstream = IO::Async::Socket->new(
             {
                $maptime = $info[2];
 
-               if ($info[1] =~ /^([a-z]+)_(.+)$/)
-               {
-                  ($type, $map) = (uc($1), $2);
-                  #$discord->status_update( { 'name' => ($instagib ? 'i' : '') . "$type on $map", type => 0 } );
-               }
+               ($type, $map) = (uc($1), $2) if ($info[1] =~ /^([a-z]+)_(.+)$/);
             }
             when ( 'labels' )
             {
@@ -858,7 +858,6 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'gameover' )
             {
                ($teamplay, $matchid) = (0, 'none');
-               #$discord->status_update( { name => 'Xonotic', type => 0 } );
             }
          }
 
@@ -917,7 +916,7 @@ sub discord_on_ready ()
    $discord->gw->on('READY' => sub ($gw, $hash)
    {
       add_me($hash->{'user'});
-      $discord->status_update( { 'name' => 'Xonotic', type => 0 } );
+      $discord->status_update( { 'name' => ($laststatus ? $laststatus : 'Xonotic'), type => 0 } );
    });
 
    return;
