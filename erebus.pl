@@ -54,7 +54,7 @@ use Unicode::Truncate;
 $ua->timeout( 3 );
 $ua->default_header( 'Accept' => 'application/json' );
 
-my ($guild, $users, $q, $laststatus);
+my ($guild, $users, $q, $laststatus, $antispam);
 
 my $config = {
    remip  => '2a02:c207:3003:5281::1',     # IP or hostname of the Xonotic server
@@ -200,7 +200,7 @@ my $shortnames = {
    'PUSHES'     => 'PSHS',
    'RETURNS'    => 'RETS',
    'REVIVALS'   => 'REVS',
-   'SCORE'      => 'SCRE',
+   #'SCORE'      => 'SCRE',
    'SUICIDES'   => 'SK',
    'TEAM'       => 'T',
    'TEAMKILLS'  => 'TK',
@@ -435,6 +435,8 @@ my $xonstream = IO::Async::Socket->new(
                      $bots--;
                   }
                }
+
+               delete $$antispam{$$players{$info[1]}{ip}} if (exists $$antispam{$$players{$info[1]}{ip}});
             }
             when ( 'chat' )
             {
@@ -866,8 +868,12 @@ my $xonstream = IO::Async::Socket->new(
             return unless (defined $$players{$info[1]}{name} && defined $$players{$info[1]}{geo});
 
             my $nick = $$players{$info[1]}{name};
+            my $ip   = $$players{$info[1]}{ip};
 
             say localtime(time) . " -> <$nick> $msg";
+
+            return if (exists $$antispam{$ip} && $msg eq $$antispam{$ip});
+            $$antispam{$ip} = $msg;
 
             $nick =~ s/`//g;
 
@@ -876,7 +882,7 @@ my $xonstream = IO::Async::Socket->new(
             $msg =~ s/\@+here/here/g;
             $msg =~ s/$discord_markdown_pattern/\\$1/g;
 
-            $msg = '_\*' . substr($msg, length($nick)+1) . '\*_' if ($msg =~ /^\Q$nick\E /);
+            $msg = '_\*' . substr($msg, length($nick)+1) . '\*_' if ($msg =~ /^\Q$nick\E /); # /me
 
             my $final = "`$nick`  $msg";
 
