@@ -79,8 +79,8 @@ my $config = {
      owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
      guild_id   => 458323696910598165, # ID of the discord guild
 
-     joinmoji   => '<:NyanPasu:562191812702240779>', # Join emoji   if not empty ('') those will be displayed between the country flag
-     partmoji   => '<:gtfo:603609334781313037>',     # Part emoji   and the players nickname when joining or leaving the server
+     joinmoji   => "\N{U+1F44B}", # Join emoji   if not empty ('') those will be displayed between the country flag
+     partmoji   => "\N{U+1F44B}", # Part emoji   and the players nickname when joining or leaving the server
 
      showvotes  => 0, # Whether to show in-game voting activity in Discord
      showtchat  => 1, # Whether to show team chat in Discord
@@ -89,7 +89,7 @@ my $config = {
    # This is all optional and made for the twilightzone server, just set weather and radio->enabled to 0 and ignore it
    weather => 0,
    radio => {
-      enabled      => 1,
+      enabled      => 0,
       # for some reason now says ERROR: Filtering and streamcopy cannot be used together.
       #youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg --postprocessor-args), '-af dynaudnorm'],
       youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg)],
@@ -401,13 +401,13 @@ my $xonstream = IO::Async::Socket->new(
                {
                   my $r = $gi->record_for_address($$players{$info[1]}{ip});
 
-                  $$players{$info[1]}{geo} = $r->{country}{iso_code} ? lc($r->{country}{iso_code}) : 'white';
+                  $$players{$info[1]}{geo} = $r->{country}{iso_code} ? lc($r->{country}{iso_code}) : undef;
 
                   if ($$config{weather})
                   {
                      return if (exists $$q{weather}{$$players{$info[1]}{ip}} && $$q{weather}{$$players{$info[1]}{ip}}+10800 > time);
 
-                     my $w = Weather::METNO->new(lat => $r->{location}{latitude}, lon => $r->{location}{longitude}, uid => '<nico@lifeisabug.com>');
+                     my $w = Weather::METNO->new(lat => $r->{location}{latitude}, lon => $r->{location}{longitude}, uid => '');
                      rcon(sprintf('defer 6 "tell #%u ^6Welcome^7, %s^6!^7 Your local ^5weather^7 forecast: ^5%.1f°C ^7/^5 %.1f°F ^8:: ^5%s ^8::^7 Cld: %u%% ^8::^7 Hum: %u%% ^8::^7 Fog: %u%% ^8::^7 UVI: %.3g ^8::^7 Wind: ^5%s^7 from %s"', $info[2], rconquote($info[4]), $w->temp_c, $w->temp_f, $w->symbol_txt, $w->cloudiness, $w->humidity, $w->foginess, $w->uvindex, $w->windspeed_bft_txt, $w->windfrom_dir));
                      $$q{weather}{$$players{$info[1]}{ip}} = time;
                   }
@@ -416,7 +416,6 @@ my $xonstream = IO::Async::Socket->new(
                }
                else
                {
-                  $$players{$info[1]}{geo} = 'white';
                   $bots++;
                }
             }
@@ -865,7 +864,8 @@ my $xonstream = IO::Async::Socket->new(
 
          if (defined $msg)
          {
-            return unless (defined $$players{$info[1]}{name} && defined $$players{$info[1]}{geo});
+            return unless (defined $$players{$info[1]}{name});
+            return if ($$players{$info[1]}{ip} eq 'bot');
 
             my $nick = $$players{$info[1]}{name};
             my $ip   = $$players{$info[1]}{ip};
