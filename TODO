@@ -10,4 +10,3 @@
   - for now it is fine as Xonotic defaults to rcon_secure 1 anyways
 - retry socket connection to xonotic if it was gone (Cannot send data to a Socket with no write_handle)
 - Add skill infos to !xonstat command now that elo is gone https://stats.xonotic.org/docs/index.html#/default/get_player__id__skill
-- FT mode has "Key: labels | Fields: teamscores score!!,rounds!!" but always? shows 0 for score, maybe manually remove the team score here - Xon Issue: https://xon.re/JDRHX

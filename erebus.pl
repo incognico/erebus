@@ -494,8 +494,9 @@ my $xonstream = IO::Async::Socket->new(
                {
                   if ($type && $map)
                   {
-                     $laststatus = ($instagib ? 'i' : '') . "$type on $map";
-                     $discord->status_update( { 'name' => $laststatus, type => 0 } );
+                     my $status = ($instagib ? 'i' : '') . "$type on $map";
+                     $discord->status_update( { 'name' => $laststatus, type => 0 } ) unless ($status eq $laststatus);
+                     $laststatus = $status;
                   }
                }
             }
@@ -969,7 +970,7 @@ sub discord_on_message_create ()
                return;
             }
 
-            return unless ((keys %$players) >= 1);
+            return unless (keys %$players > 0);
 
             $msg =~ s/`//g;
             if ( $msg =~ s/<@!?(\d+)>/\@$$users{'users'}{$1}{'username'}/g ) # user/nick
