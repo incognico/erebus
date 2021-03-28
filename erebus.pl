@@ -82,8 +82,9 @@ my $config = {
      joinmoji   => "\N{U+1F44B}", # Join emoji   if not empty ('') those will be displayed between the country flag
      partmoji   => "\N{U+1F44B}", # Part emoji   and the players nickname when joining or leaving the server
 
-     showvotes  => 0, # Whether to show in-game voting activity in Discord
+     showtcolor => 1, # Whether to show team color indicator for chat in Discord
      showtchat  => 1, # Whether to show team chat in Discord
+     showvotes  => 0, # Whether to show in-game voting activity in Discord
    },
 
    # This is all optional and made for the twilightzone server, just set weather and radio->enabled to 0 and ignore it
@@ -119,37 +120,44 @@ my $discord = Mojo::Discord->new(
 
 my $teams = {
    -1 => {
-      color  => 'NONE',
-      scolor => '-',
+      color  => 'SPECTATOR',
+      scolor => 'S',
+      emoji  => ':telescope:',
    },
    1 => {
       color  => 'NONE',
       scolor => '-',
+      emoji  => ':white_square_button:',
    },
    5 => {
       color  => 'RED',
       scolor => 'R',
       id     => 1,
+      emoji  => ':red_square:',
    },
    10 => {
       color  => 'PINK',
       scolor => 'P',
       id     => 4,
+      emoji  => ':purple_square:',
    },
    13 => {
       color  => 'YELLOW',
       scolor => 'Y',
       id     => 3,
+      emoji  => ':yellow_square:',
    },
    14 => {
       color  => 'BLUE',
       scolor => 'B',
       id     => 2,
+      emoji  => ':blue_square:',
    },
    spectator => {
       color  => 'SPECTATOR',
       scolor => 'S',
       id     => 1337,
+      emoji  => ':telescope:',
    },
 };
 
@@ -428,6 +436,7 @@ my $xonstream = IO::Async::Socket->new(
                   unless ($$players{$info[1]}{ip} eq 'bot')
                   {
                      $msg = 'has left the game';
+                     @lastplayers = grep { $_ != $delaydelete } @lastplayers;
                   }
                   else
                   {
@@ -472,6 +481,8 @@ my $xonstream = IO::Async::Socket->new(
             when ( 'team' )
             {
                $$players{$info[1]}{team} = $info[2];
+
+               $teamplay = 1 if ($info[2] ~~ [5, 10, 13, 14]);
             }
             when ( 'gamestart' )
             {
@@ -495,7 +506,7 @@ my $xonstream = IO::Async::Socket->new(
                   if ($type && $map)
                   {
                      my $status = ($instagib ? 'i' : '') . "$type on $map";
-                     $discord->status_update( { 'name' => $laststatus, type => 0 } ) unless ($status eq $laststatus);
+                     $discord->status_update( { 'name' => $laststatus, type => 0 } ) unless (defined $laststatus && $status eq $laststatus);
                      $laststatus = $status;
                   }
                }
@@ -870,6 +881,7 @@ my $xonstream = IO::Async::Socket->new(
 
             my $nick = $$players{$info[1]}{name};
             my $ip   = $$players{$info[1]}{ip};
+            my $team = $$players{$info[1]}{team};
 
             say localtime(time) . " -> <$nick> $msg";
 
@@ -885,7 +897,10 @@ my $xonstream = IO::Async::Socket->new(
 
             $msg = '_\*' . substr($msg, length($nick)+1) . '\*_' if ($msg =~ /^\Q$nick\E /); # /me
 
-            my $final = "`$nick`  $msg";
+            my $t = '';
+            $t = $$teams{$team}{emoji} . ' ' if ($$config{showtcolor} && $teamplay);
+
+            my $final = "$t`$nick`  $msg";
 
             $final =~ s/^/$$config{discord}{partmoji} / if ($$config{discord}{partmoji} && $info[0] eq 'part');
             $final =~ s/^/$$config{discord}{joinmoji} / if ($$config{discord}{joinmoji} && $info[0] eq 'join');
