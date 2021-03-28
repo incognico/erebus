@@ -898,7 +898,7 @@ my $xonstream = IO::Async::Socket->new(
             $msg = '_\*' . substr($msg, length($nick)+1) . '\*_' if ($msg =~ /^\Q$nick\E /); # /me
 
             my $t = '';
-            $t = $$teams{$team}{emoji} . ' ' if ($$config{showtcolor} && $teamplay);
+            $t = $$teams{$team}{emoji} . ' ' if ($$config{discord}{showtcolor} && $teamplay);
 
             my $final = "$t`$nick`  $msg";
 
