@@ -420,7 +420,7 @@ my $xonstream = IO::Async::Socket->new(
                      $$q{weather}{$$players{$info[1]}{ip}} = time;
                   }
 
-                  $msg = 'has joined the game' unless ($info[1] ~~ @lastplayers); # filter joins after map change to prevent spam
+                  $msg = '_has joined the game_' unless ($info[1] ~~ @lastplayers); # filter joins after map change to prevent spam
                }
                else
                {
@@ -435,7 +435,7 @@ my $xonstream = IO::Async::Socket->new(
                {
                   unless ($$players{$info[1]}{ip} eq 'bot')
                   {
-                     $msg = 'has left the game';
+                     $msg = '_has left the game_';
                      @lastplayers = grep { $_ != $delaydelete } @lastplayers;
                   }
                   else
@@ -488,12 +488,9 @@ my $xonstream = IO::Async::Socket->new(
             {
                ($bots, $players, $teamplay) = (0, {}, 0);
 
-               $matchid = $info[2];
+               ($type, $map) = (uc($1), $2) if ($info[1] =~ /^([a-z]+)_(.+)$/);
 
-               if ($info[1] =~ /^([a-z]+)_(.+)$/)
-               {
-                  ($type, $map) = (uc($1), $2);
-               }
+               $matchid = $info[2];
             }
             when ( 'gameinfo' )
             {
@@ -895,7 +892,7 @@ my $xonstream = IO::Async::Socket->new(
             $msg =~ s/\@+here/here/g;
             $msg =~ s/$discord_markdown_pattern/\\$1/g;
 
-            $msg = '_\*' . substr($msg, length($nick)+1) . '\*_' if ($msg =~ /^\Q$nick\E /); # /me
+            $msg = '_' . substr($msg, length($nick)+1) . '_' if ($msg =~ /^\Q$nick\E /); # /me
 
             my $t = '';
             $t = $$teams{$team}{emoji} . ' ' if ($$config{discord}{showtcolor} && $teamplay);
