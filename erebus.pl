@@ -890,7 +890,7 @@ my $xonstream = IO::Async::Socket->new(
             $msg =~ s/(\s|\R)+/ /gn;
             $msg =~ s/\@+everyone/everyone/g;
             $msg =~ s/\@+here/here/g;
-            $msg =~ s/$discord_markdown_pattern/\\$1/g;
+            $msg =~ s/$discord_markdown_pattern/\\$1/g unless ($msg =~ /^_has (?:joined|left) the game_/); # FIXME: Do it like in Gus
 
             $msg = '_' . substr($msg, length($nick)+1) . '_' if ($msg =~ /^\Q$nick\E /); # /me
 
