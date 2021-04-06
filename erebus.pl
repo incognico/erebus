@@ -503,7 +503,7 @@ my $xonstream = IO::Async::Socket->new(
                   if ($type && $map)
                   {
                      my $status = ($instagib ? 'i' : '') . "$type on $map";
-                     $discord->status_update( { 'name' => $laststatus, type => 0 } ) unless (defined $laststatus && $status eq $laststatus);
+                     $discord->status_update( { 'name' => $status, type => 0 } ) unless (defined $laststatus && $status eq $laststatus);
                      $laststatus = $status;
                   }
                }
