@@ -420,7 +420,7 @@ my $xonstream = IO::Async::Socket->new(
                      $$q{weather}{$$players{$info[1]}{ip}} = time;
                   }
 
-                  $msg = '_has joined the game_' unless ($info[1] ~~ @lastplayers); # filter joins after map change to prevent spam
+                  $msg = 'has joined the game' unless ($info[1] ~~ @lastplayers); # filter joins after map change to prevent spam
                }
                else
                {
@@ -429,22 +429,22 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'part' )
             {
-               $delaydelete = $info[1];
-
                if (defined $$players{$info[1]}{ip})
                {
+                  $delaydelete = $info[1];
+
                   unless ($$players{$info[1]}{ip} eq 'bot')
                   {
-                     $msg = '_has left the game_';
+                     $msg = 'has left the game';
                      @lastplayers = grep { $_ != $delaydelete } @lastplayers;
                   }
                   else
                   {
                      $bots--;
                   }
-               }
 
-               delete $$antispam{$$players{$info[1]}{ip}} if (exists $$antispam{$$players{$info[1]}{ip}});
+                  delete $$antispam{$$players{$info[1]}{ip}} if (exists $$antispam{$$players{$info[1]}{ip}});
+               }
             }
             when ( 'chat' )
             {
@@ -890,9 +890,10 @@ my $xonstream = IO::Async::Socket->new(
             $msg =~ s/(\s|\R)+/ /gn;
             $msg =~ s/\@+everyone/everyone/g;
             $msg =~ s/\@+here/here/g;
-            $msg =~ s/$discord_markdown_pattern/\\$1/g unless ($msg =~ /^_has (?:joined|left) the game_/); # FIXME: Do it like in Gus
+            $msg =~ s/$discord_markdown_pattern/\\$1/g;
 
             $msg = '_' . substr($msg, length($nick)+1) . '_' if ($msg =~ /^\Q$nick\E /); # /me
+            $msg = '_' . $msg . '_' if ($info[0] eq 'part' || $info[0] eq 'join');
 
             my $t = '';
             $t = $$teams{$team}{emoji} . ' ' if ($$config{discord}{showtcolor} && $teamplay);
