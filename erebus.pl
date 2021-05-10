@@ -67,8 +67,8 @@ my $config = {
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
 
-   allow_cmds => 1,                                 # set this to 0 to disable any commands below
-   status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
+   allow_cmds => 1,                                # set this to 0 to disable status & xonstat commands below (rcon cmd can be disabled with owner_id 0)
+   status_re  => qr/^!stat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
    xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
    rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 
@@ -76,7 +76,7 @@ my $config = {
      linkchan   => 824252953212616704, # The discord channel ID which will link discord and server chats
      nocmdchans => [706113584626663475, 610862900357234698, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
 
-     owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
+     owner_id   => 373912992758235148, # ID or role of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon. Can also be a role id if prefixed by @&
      guild_id   => 458323696910598165, # ID of the discord guild
 
      joinmoji   => "\N{U+1F44B}", # Join emoji   if not empty ('') those will be displayed between the country flag
@@ -957,6 +957,7 @@ sub discord_on_message_create ()
       my $username = $hash->{'author'}->{'username'};
       my $bot      = exists $hash->{'author'}->{'bot'} ? $hash->{'author'}->{'bot'} : 0;
       my $nickname = $hash->{'member'}->{'nick'};
+      my @roles    = $hash->{'member'}->{'roles'}->@*;
       my $msg      = $hash->{'content'};
       my $msgid    = $hash->{'id'};
       my $channel  = $hash->{'channel_id'};
@@ -971,14 +972,34 @@ sub discord_on_message_create ()
 
          if ( $channel eq $$config{discord}{linkchan} )
          {
-            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} && $$config{allow_cmds} )
+            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $$config{discord}{owner_id} )
             {
                return if $1;
                return unless $2;
 
-               rcon($2);
-               $discord->create_reaction( $channel, $msgid, "\N{U+2705}" );
-               say localtime(time) . " !! RCON used by: <$username> Command: $2";
+               my $command = $2;
+               my $allowed = 0;
+
+               if ( $$config{discord}{owner_id} =~ /^@&(\d+)$/ )
+               {
+                  my $role = $1;
+
+                  for (@roles)
+                  {
+                     $allowed = 1 if ($role == $_);
+                  }
+               }
+               elsif ( $$config{discord}{owner_id} =~ /^\d+$/ && $id == $$config{discord}{owner_id} )
+               {
+                 $allowed = 1;
+               }
+
+               if ($allowed)
+               {
+                  rcon($command);
+                  $discord->create_reaction( $channel, $msgid, "\N{U+2705}" );
+                  say localtime(time) . " !! RCON used by: <$username> Command: $command";
+               }
 
                return;
             }
