@@ -971,7 +971,7 @@ sub discord_on_message_create ()
 
          if ( $channel eq $$config{discord}{linkchan} )
          {
-            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} && $$config{discord}{allow_cmds} )
+            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} && $$config{allow_cmds} )
             {
                return if $1;
                return unless $2;
@@ -1009,7 +1009,7 @@ sub discord_on_message_create ()
          {
             return;
          }
-         elsif ( $msg =~ /$$config{status_re}/ && $$config{discord}{allow_cmds} )
+         elsif ( $msg =~ /$$config{status_re}/ && $$config{allow_cmds} )
          {
             unless ($map && $type)
             {
@@ -1020,7 +1020,7 @@ sub discord_on_message_create ()
                $discord->send_message( $channel, 'Type: **' . ($instagib ? 'i' : '') . "$type**  Map: **$map**  Players: **" . ((keys %$players) - $bots) . '**' );
             }
          }
-         elsif ( $msg =~ /$$config{xonstat_re}/ && $$config{discord}{allow_cmds} )
+         elsif ( $msg =~ /$$config{xonstat_re}/ && $$config{allow_cmds} )
          {
             my ($qid, $stats);
             ($qid = $1) =~ s/[^0-9]//g;
