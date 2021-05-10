@@ -67,7 +67,8 @@ my $config = {
    logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
    debug  => 0,                            # Prints incoming log lines to console if 1
 
-   status_re  => qr/^!status/i,                     # regexp for the status command
+   allow_cmds => 1,                                 # set this to 0 to disable any commands below
+   status_re  => qr/^!xstat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
    xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
    rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
 
@@ -75,7 +76,6 @@ my $config = {
      linkchan   => 824252953212616704, # The discord channel ID which will link discord and server chats
      nocmdchans => [706113584626663475, 610862900357234698, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
 
-     client_id  => 706112802137309224, # Discord bot client ID https://discordapp.com/developers/applications/
      owner_id   => 373912992758235148, # ID of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon
      guild_id   => 458323696910598165, # ID of the discord guild
 
@@ -971,7 +971,7 @@ sub discord_on_message_create ()
 
          if ( $channel eq $$config{discord}{linkchan} )
          {
-            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} )
+            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} && && $$config{discord}{allow_cmds} )
             {
                return if $1;
                return unless $2;
@@ -1009,7 +1009,7 @@ sub discord_on_message_create ()
          {
             return;
          }
-         elsif ( $msg =~ /$$config{status_re}/ )
+         elsif ( $msg =~ /$$config{status_re}/ && $$config{discord}{allow_cmds} )
          {
             unless ($map && $type)
             {
@@ -1020,7 +1020,7 @@ sub discord_on_message_create ()
                $discord->send_message( $channel, 'Type: **' . ($instagib ? 'i' : '') . "$type**  Map: **$map**  Players: **" . ((keys %$players) - $bots) . '**' );
             }
          }
-         elsif ( $msg =~ /$$config{xonstat_re}/ )
+         elsif ( $msg =~ /$$config{xonstat_re}/ && $$config{discord}{allow_cmds} )
          {
             my ($qid, $stats);
             ($qid = $1) =~ s/[^0-9]//g;
