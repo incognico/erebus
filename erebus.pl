@@ -971,7 +971,7 @@ sub discord_on_message_create ()
 
          if ( $channel eq $$config{discord}{linkchan} )
          {
-            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} && && $$config{discord}{allow_cmds} )
+            if ( $msg =~ /(.*)?$$config{rcon_re}/i && $id == $$config{discord}{owner_id} && $$config{discord}{allow_cmds} )
             {
                return if $1;
                return unless $2;
