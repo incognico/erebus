@@ -120,7 +120,8 @@ my $discord = Mojo::Discord->new(
 
 my $teams = {
    -1 => {
-      color  => 'SPECTATOR',
+      #color  => 'SPECTATOR',
+      color  => 'SPEC',
       scolor => 'S',
       emoji  => ':telescope:',
    },
@@ -154,7 +155,8 @@ my $teams = {
       emoji  => ':blue_square:',
    },
    spectator => {
-      color  => 'SPECTATOR',
+      #color  => 'SPECTATOR',
+      color  => 'SPEC',
       scolor => 'S',
       id     => 1337,
       emoji  => ':telescope:',
@@ -468,7 +470,8 @@ my $xonstream = IO::Async::Socket->new(
             }
             when ( 'chat_spec' )
             {
-               $msg = '(SPECTATOR) ' . $info[2];
+               #$msg = '(SPECTATOR) ' . $info[2];
+               $msg = '(SPEC) ' . $info[2];
             }
             when ( 'chat_team' )
             {
@@ -697,7 +700,7 @@ my $xonstream = IO::Async::Socket->new(
                $heading   .= "Players: " . scalar(@pkeys) . ($maptime ? (' / Match duration: ' . duration($maptime)) : '');
                $heading   .= ' <<<';
 
-               my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'Default::singlei_utf8'); # cell_pad => $teamplay ? 0 : 1
+               my $t     = Text::ANSITable->new(use_utf8 => 1, wide => 1, use_color => 0, border_style => 'UTF8::SingleLineInnerOnly'); # cell_pad => $teamplay ? 0 : 1
                my @cols  = grep { length && !/^(FPS|ELO)$/ } @pscorelabels;
 
                if ($teamplay)
@@ -957,7 +960,7 @@ sub discord_on_message_create ()
       my $username = $hash->{'author'}->{'username'};
       my $bot      = exists $hash->{'author'}->{'bot'} ? $hash->{'author'}->{'bot'} : 0;
       my $nickname = $hash->{'member'}->{'nick'};
-      my @roles    = $hash->{'member'}->{'roles'}->@*;
+      my @roles    = defined $hash->{'member'}->{'roles'} ? $hash->{'member'}->{'roles'}->@* : ();
       my $msg      = $hash->{'content'};
       my $msgid    = $hash->{'id'};
       my $channel  = $hash->{'channel_id'};
