@@ -899,7 +899,7 @@ my $xonstream = IO::Async::Socket->new(
             $msg = '_' . $msg . '_' if ($info[0] eq 'part' || $info[0] eq 'join');
 
             my $t = '';
-            $t = $$teams{$team}{emoji} . ' ' if ($$config{discord}{showtcolor} && $teamplay);
+            $t = $$teams{$team}{emoji} . ' ' if ($$config{discord}{showtcolor} && $teamplay && defined $team);
 
             my $final = "$t`$nick`  $msg";
 
