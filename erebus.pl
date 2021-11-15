@@ -103,8 +103,8 @@ my $config = {
       xoncmd_re    => qr/!queue (?:add)? ?(.+)/i,
    },
 };
-# You can also experiment with different table border styles and paddings, Default::csingle with default (1) cell_pad looks nice but uses lots of space and chars
-# As soon as it warps it looks off in discord. To get as tight as possible use Default::singlei_utf8, cell_pad 0 and extend the $shortnames hash even more.
+# You can also experiment with different table border styles and paddings, UTF8::SingleLineCurved with default (1) cell_pad looks nice but uses lots of space and chars
+# As soon as it warps it looks off in discord. To get as tight as possible use UTF8::SingleLineInnerOnly, cell_pad 0 and extend the $shortnames hash even more.
 # cell_pad 0 breaks even more on wrapping but does not wrap so often, it really needs to be played around with.
 
 my $discord = Mojo::Discord->new(
@@ -1225,14 +1225,18 @@ sub qfont_decode ($qstr = '', $ascii = 0)
 
    for (split('', $qstr))
    {
+      next if ($_ eq "\{U+FFFD}");
+
       my $i = ord($_) - 0xE000;
       my $c = ($_ ge "\N{U+E000}" && $_ le "\N{U+E0FF}")
       ? ($ascii ? $qfont_ascii_table[$i % @qfont_ascii_table] : $qfont_unicode_glyphs[$i % @qfont_unicode_glyphs])
       : $_;
-      push @chars, $c if defined $c;
+
+      push(@chars, $c) if (defined $c);
    }
 
-   return join '', @chars;
+   return join('', @chars) if @chars;
+   return 'unknown';
 }
 
 sub stripcolors ($str)
