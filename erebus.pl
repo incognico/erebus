@@ -7,20 +7,8 @@
 # Requires https://github.com/vsTerminus/Mojo-Discord
 #
 # Copyright 2020-2021, Nico R. Wohlgemuth <nico@lifeisabug.com>
-
-# Xonotic server.cfg:
 #
-# log_dest_udp "<locip:port>"
-# sv_eventlog 1
-# sv_eventlog_ipv6_delimiter 1
-# rcon_secure 1 // or 2
-# rcon_password "<pass>"
-# sv_adminnick "^8DISCORD^3" // If the server is not using SMB modpack
-#                            // (if you don't know what that is, you aren't)
-# sv_logscores_bots 1 // if you want
-
-# Note that rcon_restricted_password can be used only when smbmod is 0
-# and "say" is added to rcon_restricted_commands.
+# Usage: ./erebus.pl [config.yml]
 
 use v5.28.0;
 
@@ -47,75 +35,41 @@ use JSON::MaybeXS;
 use LWP::Simple qw($ua get);
 use MaxMind::DB::Reader;
 use Mojo::Discord;
+use Path::This '$THISDIR';
+use YAML::XS 'LoadFile';
 use Text::ANSITable;
 use Unicode::Homoglyph::Replace 'replace_homoglyphs';
 use Unicode::Truncate;
+
+my $yml;
+
+if (@ARGV)
+{
+   $yml = File::Spec->file_name_is_absolute($ARGV[0]) ? $ARGV[0] : $THISDIR . '/' . $ARGV[0];
+   die $yml . ' could not be found.' unless -f $yml;
+}
+else
+{
+   $yml = $THISDIR . '/config.yml';
+}
+
+die 'No yaml configuration file found! Does config.yml exist?' unless -f $yml;
+my $config = LoadFile($yml);
 
 $ua->timeout( 3 );
 $ua->default_header( 'Accept' => 'application/json' );
 
 my ($guild, $users, $q, $laststatus, $antispam);
 
-my $config = {
-   remip  => '2a02:c207:3003:5281::1',     # IP or hostname of the Xonotic server
-   port   => 26660,                        # Port of the Xonotic Server, local port = this + 444 (log_dest_udp port)
-   locip  => undef,                        # Local IP, if undef it uses $remip (log_dest_udp ip)
-   secure => 1,                            # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
-   smbmod => 0,                            # Set to 1 if server uses SMB modpack, otherwise use 0 and set sv_adminnick "^8DISCORD^3" in server.cfg
-   pass   => '',                           # rcon_password in server.cfg
-   geo    => '/home/k/GeoLite2-City.mmdb', # Path to GeoLite2-City.mmdb from maxmind.com
-   logdir => "$ENV{HOME}/.xonotic/erebus/scorelogs", # If not empty (''), this folder will be used to save endmatch scoreboards to (one .txt file per match)
-   debug  => 0,                            # Prints incoming log lines to console if 1
-
-   allow_cmds => 1,                                # set this to 0 to disable status & xonstat commands below (rcon cmd can be disabled with owner_id 0)
-   status_re  => qr/^!stat(us|su)/i,               # regexp for the status command, you probably want  qr/^!status/i  here for !status
-   xonstat_re => qr/^!(?:xon(?:stat)?s?|xs) (.+)/i, # regexp for the xonstat command
-   rcon_re    => qr/^!rcon (.+)/i,                  # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
-
-   discord => {
-     linkchan   => 824252953212616704, # The discord channel ID which will link discord and server chats
-     nocmdchans => [706113584626663475, 610862900357234698, 698803767512006677], # Channel IDs where !cmds like !status are not allowed
-
-     owner_id   => 373912992758235148, # ID or role of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon. Can also be a role id if prefixed by @&
-     guild_id   => 458323696910598165, # ID of the discord guild
-
-     joinmoji   => "\N{U+1F44B}", # Join emoji   if not empty ('') those will be displayed between the country flag
-     partmoji   => "\N{U+1F44B}", # Part emoji   and the players nickname when joining or leaving the server
-
-     showtcolor => 1, # Whether to show team color indicator for chat in Discord
-     showtchat  => 1, # Whether to show team chat in Discord
-     showvotes  => 0, # Whether to show in-game voting activity in Discord
-   },
-
-   # This is all optional and made for the twilightzone server, just set weather and radio->enabled to 0 and ignore it
-   weather => 0,
-   radio => {
-      enabled      => 0,
-      # for some reason now says ERROR: Filtering and streamcopy cannot be used together.
-      #youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg --postprocessor-args), '-af dynaudnorm'],
-      youtube_dl   => [qw(/usr/bin/youtube-dl -q -w -x -f bestaudio/best[height<=480] --audio-format vorbis --audio-quality 1 --no-mtime --no-warnings --prefer-ffmpeg)],
-      yt_api_key   => '',
-      tempdir      => "$ENV{HOME}/.xonotic/radiotmp",
-      webdir       => '/srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio',
-      queuefile    => 'queue.txt',
-      playlistfile => 'playlist.txt',
-      prefix       => 'radio-twlz-',
-      xoncmd_re    => qr/!queue (?:add)? ?(.+)/i,
-   },
-};
-# You can also experiment with different table border styles and paddings, UTF8::SingleLineCurved with default (1) cell_pad looks nice but uses lots of space and chars
-# As soon as it warps it looks off in discord. To get as tight as possible use UTF8::SingleLineInnerOnly, cell_pad 0 and extend the $shortnames hash even more.
-# cell_pad 0 breaks even more on wrapping but does not wrap so often, it really needs to be played around with.
-
 my $discord = Mojo::Discord->new(
    'version'   => 9999,
    'url'       => 'https://xonotic.lifeisabug.com',
-   'token'     => '', # Discord bot secret token https://discordapp.com/developers/applications/
+   'token'     => $$config{discord}{token},
    'reconnect' => 1,
-   'verbose'   => 0,
-   'logdir'    => "$ENV{HOME}/.xonotic/erebus",
-   'logfile'   => 'discord.log',
-   'loglevel'  => 'info',
+   'verbose'   => 1,
+   'logdir'    => $$config{discord}{logdir},
+   'logfile'   => $$config{discord}{logfile},
+   'loglevel'  => $$config{discord}{loglevel},
 );
 
 my $teams = {

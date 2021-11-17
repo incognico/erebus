@@ -1,0 +1,80 @@
+---
+
+# Xonotic server.cfg:
+#
+# log_dest_udp "<locip:port>"
+# sv_eventlog 1
+# sv_eventlog_ipv6_delimiter 1
+# rcon_secure 1 // or 2
+# rcon_password "<pass>"
+# sv_adminnick "^8DISCORD^3" // If the server is not using SMB modpack
+#                            // (if you don't know what that is, you aren't)
+# sv_logscores_bots 1 // if you want
+#
+# Note that rcon_restricted_password can be used only when smbmod is 0 and "say" is added to rcon_restricted_commands.
+
+
+remip: 2a02:c207:3003:5281::1 # IP or hostname of the Xonotic server
+port: 26660 # Port of the Xonotic Server, local port = this+444 (log_dest_udp port) Eg. with "port: 26660" you set log_dest_udp in Xonotic to 27104
+locip: ~ # Local IP, if ~ it uses remip above (log_dest_udp ip)
+secure: 1 # rcon_secure value in server.cfg, 0 is insecure, 1 or 2 are recommended (1 is the Xonotic default)
+smbmod: 0 # Set to 1 if server uses SMB modpack, otherwise use 0 and set sv_adminnick "^8DISCORD^3" in server.cfg
+pass: rconpw # rcon_password in server.cfg
+geo: /home/k/GeoLite2-City.mmdb # Path to GeoLite2-City.mmdb from maxmind.com
+logdir: /home/nico/.xonotic/erebus/scorelogs # If not empty (~), this folder will be used to save endmatch scoreboards to (one .txt file per match)
+debug: 0 # Prints incoming log lines to console if 1
+
+allow_cmds: 1 # set this to 0 to disable status & xonstat commands below (rcon cmd can be disabled with owner_id 0)
+status_re: !!perl/regexp (?^ui:^!stat(us|su)) # regexp for the status command, you probably want  !!perl/regexp (?^ui:^!status)  here for !status
+xonstat_re: !!perl/regexp (?^ui:^!(?:xon(?:stat)?s?|xs) (.+)) # regexp for the xonstat command
+rcon_re: !!perl/regexp (?^ui:^!rcon (.+)) # regexp for the rcon command, only owner_id is allowed to use this, works in linkchan only
+
+discord:
+  token: S3cR3tToKeN # The SECRET Discord bot token https://discordapp.com/developers/applications/
+  logdir: /home/nico/.xonotic/erebus # Directory where logfile below is written to
+  logfile: discord.log # The Discord connection log file
+  loglevel: info # The Discord connection log level info, debug, etc. (See Mojo::Discord)
+
+  linkchan: 824252953212616704 # The Discord channel ID which will link Discord and Xonotic server chats
+  nocmdchans: # Array, set to [] for none. Channel IDs where !cmds like !status are not allowed when allow_cmds is 1
+  - 706113584626663475
+  - 610862900357234698
+  - 698803767512006677
+
+  owner_id: 373912992758235148 # ID or role of the bots owner, if set this allows the owner to use the !rcon command, using 0 disables !rcon. Can also be a role ID if prefixed by @&
+  guild_id: 458323696910598165 # ID of the discord guild
+
+  joinmoji: "\U0001F44B" # Join emoji   if not empty ('') those will be displayed between the country flag
+  partmoji: "\U0001F44B" # Part emoji   and the players nickname when joining or leaving the server
+
+  showtcolor: 1 # Whether to show team color indicator for chat in Discord
+  showtchat: 1 # Whether to show team chat in Discord
+  showvotes: 0 # Whether to show in-game voting activity in Discord
+
+
+
+# This is all optional and made for the twilightzone server, just set weather and radio->enabled to 0 and ignore it
+weather: 0
+radio:
+  enabled: 0
+  yt_api_key: S3cR3tKeY
+  tempdir: /home/nico/.xonotic/radiotmp
+  webdir: /srv/www/distfiles.lifeisabug.com/htdocs/xonotic/radio
+  queuefile: queue.txt
+  playlistfile: playlist.txt
+  prefix: radio-twlz-
+  xoncmd_re: !!perl/regexp (?^ui:!queue (?:add)? ?(.+))
+  youtube_dl:
+  - /usr/bin/youtube-dl
+  - -q
+  - -w
+  - -x
+  - -f
+  - bestaudio/best[height<=480]
+  - --audio-format
+  - vorbis
+  - --audio-quality
+  - '1'
+  - --no-mtime
+  - --no-warnings
+  - --prefer-ffmpeg
