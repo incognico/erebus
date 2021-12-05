@@ -10,3 +10,4 @@
   - for now it is fine as Xonotic defaults to rcon_secure 1 anyways
 - retry socket connection to xonotic if it was gone (Cannot send data to a Socket with no write_handle)
 - Add skill infos to !xonstat command now that elo is gone https://stats.xonotic.org/docs/index.html#/default/get_player__id__skill
+- AS objectives score 666?
