@@ -1395,7 +1395,7 @@ sub radioq_request ($request, $ip, $name, $choose = 0)
          }
          else
          {
-            say localtime(time) . ' ## YouTube: Error, youtube-dl failed for: ' . $title;
+            say localtime(time) . ' ## YouTube: Error, download failed for: ' . $title;
             rcon('sv_cmd ircmsg ^0[^1YouTube^0] ^7Error downloading track: ' . $title);
          }
       },

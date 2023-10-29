@@ -65,7 +65,7 @@ radio:
   prefix: radio-twlz-
   xoncmd_re: !!perl/regexp (?^ui:!queue (?:add)? ?(.+))
   youtube_dl:
-  - /usr/bin/youtube-dl
+  - /usr/bin/yt-dlp
   - -q
   - -w
   - -x
